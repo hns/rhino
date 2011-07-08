@@ -22,11 +22,14 @@ public class TestInlineCaching extends ClassyScriptable{
 		t0.put("z", null, 300);
 		
 		t1 = new TestInlineCaching();
+		t1.put("name", null, "rohit");
 		t1.put("x",null,10);
-		t1.put("p", null, 20);
+		t1.put("y", null, 20);
 		
 		t2 = new TestInlineCaching();
-		t2.put("name", null, 500);
+		t2.put("name", null, "hannes");
+		t2.put("x", null, 15);
+		t2.put("y", null, 25);
 		
 		hm = new HashMap<String, Integer>();
 		hm.put("x",10);
@@ -39,9 +42,11 @@ public class TestInlineCaching extends ClassyScriptable{
 
 		int value = (Integer) t0.getWithInlineCaching("x");
 		int value1 = (Integer)t0.get("x",null);
+
 		System.out.println(value);
 		System.out.println(value1);
-		System.out.println(t1.getWithInlineCaching("p"));
+		
+		System.out.println(t1.getWithInlineCaching("y"));
 		System.out.println(t1.getWithInlineCaching("x"));
 
 		long time = 0;
@@ -74,6 +79,10 @@ public class TestInlineCaching extends ClassyScriptable{
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
 		
+		lengthSquared(t0);
+		
+		
+		
 	}
 
 
@@ -97,6 +106,13 @@ public class TestInlineCaching extends ClassyScriptable{
 	
 	}
 	
+	private static int lengthSquared(TestInlineCaching tic){
+		return (Integer)tic.get("x") * (Integer) tic.get("y");
+	}
+	
+	private static int lengthSquaredWithInlineCaching(TestInlineCaching tic){
+		return (Integer)tic.getWithInlineCaching("x") * (Integer) tic.getWithInlineCaching("y");
+	}
 
 
 }
