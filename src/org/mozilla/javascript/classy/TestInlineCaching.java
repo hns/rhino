@@ -51,7 +51,6 @@ public class TestInlineCaching extends ClassyScriptable{
 		System.out.println(lengthSquared(t2));
 
 		System.out.println(lengthSquaredWithInlineCaching(t0));
-		lengthSquaredWithInlineCaching(t0);
 		System.out.println(lengthSquaredWithInlineCaching(test));
 		System.out.println(lengthSquaredWithInlineCaching(t1));
 		System.out.println(lengthSquaredWithInlineCaching(t2));
