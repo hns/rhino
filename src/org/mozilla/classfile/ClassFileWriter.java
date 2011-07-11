@@ -895,6 +895,51 @@ public class ClassFileWriter {
         }
     }
 
+    public void addInvokeDynamic(String methodName, String methodType,
+                                 ClassFileWriter.MethodHandle bsm, Object... bsmArgs) {
+        if (DEBUGCODE) {
+            System.out.println("Add invokedynamic, " + methodName + ", " + methodType);
+        }
+        // JDK 1.7 major class file version is required for invokedynamic
+        if (MajorVersion < 51) {
+            throw new RuntimeException(
+                    "Please build and run with JDK 1.7 for invokedynamic support");
+        }
+
+        int parameterInfo = sizeOfParameters(methodType);
+        // int parameterCount = parameterInfo >>> 16;
+        int stackDiff = (short)parameterInfo;
+
+        int newStack = itsStackTop + stackDiff;
+        if (newStack < 0 || Short.MAX_VALUE < newStack) badStack(newStack);
+
+        BootstrapEntry bsmEntry = new BootstrapEntry(bsm, bsmArgs);
+
+        if (itsBootstrapMethods == null) {
+            itsBootstrapMethods = new ObjArray();
+        }
+        int bootstrapIndex = itsBootstrapMethods.indexOf(bsmEntry);
+        if (bootstrapIndex == -1) {
+            bootstrapIndex = itsBootstrapMethods.size();
+            itsBootstrapMethods.add(bsmEntry);
+            itsBootstrapMethodsLength += bsmEntry.code.length;
+        }
+
+        short invokedynamicIndex = itsConstantPool.addInvokeDynamic(
+                methodName, methodType, bootstrapIndex);
+
+        addToCodeBuffer(ByteCode.INVOKEDYNAMIC);
+        addToCodeInt16(invokedynamicIndex);
+        addToCodeInt16(0);
+
+        itsStackTop = (short)newStack;
+        if (newStack > itsMaxStack) itsMaxStack = (short)newStack;
+        if (DEBUGSTACK) {
+            System.out.println("After invokedynamic stack = " + itsStackTop);
+        }
+
+    }
+
     /**
      * Generate code to load the given integer on stack.
      *
@@ -2192,6 +2237,20 @@ public class ClassFileWriter {
                         push(TypeInfo.fromType(returnType, itsConstantPool));
                     }
                     break;
+                case ByteCode.INVOKEDYNAMIC:
+                    index = getOperand(bci + 1, 2);
+                    methodType = (String) itsConstantPool.getConstantData(index);
+                    parameterCount = sizeOfParameters(methodType) >>> 16;
+                    for (int i = 0; i < parameterCount; i++) {
+                        pop();
+                    }
+                    rParen = methodType.indexOf(')');
+                    returnType = methodType.substring(rParen + 1);
+                    returnType = descriptorToInternalName(returnType);
+                    if (!returnType.equals("V")) {
+                        push(TypeInfo.fromType(returnType, itsConstantPool));
+                    }
+                    break;
                 case ByteCode.GETFIELD:
                     pop();
                 case ByteCode.GETSTATIC:
@@ -2737,10 +2796,6 @@ public class ClassFileWriter {
     {
         int size = 0;
 
-        if (itsSourceFileNameIndex != 0) {
-            itsConstantPool.addUtf8("SourceFile");
-        }
-
         size += 8; //writeLong(FileHeaderConstant);
         size += itsConstantPool.getWriteSize();
         size += 2; //writeShort(itsFlags);
@@ -2751,40 +2806,50 @@ public class ClassFileWriter {
 
         size += 2; //writeShort(itsFields.size());
         for (int i = 0; i < itsFields.size(); i++) {
-            size += ((ClassFileField)(itsFields.get(i))).getWriteSize();
+            size += ((ClassFileField)itsFields.get(i)).getWriteSize();
         }
 
         size += 2; //writeShort(itsMethods.size());
         for (int i = 0; i < itsMethods.size(); i++) {
-            size += ((ClassFileMethod)(itsMethods.get(i))).getWriteSize();
+            size += ((ClassFileMethod)itsMethods.get(i)).getWriteSize();
         }
 
+        size += 2; //writeShort(attributeCount);
         if (itsSourceFileNameIndex != 0) {
-            size += 2; //writeShort(1);  attributes count
             size += 2; //writeShort(sourceFileAttributeNameIndex);
             size += 4; //writeInt(2);
             size += 2; //writeShort(itsSourceFileNameIndex);
-        }else {
-            size += 2; //out.writeShort(0);  no attributes
+        }
+        if (itsBootstrapMethods != null) {
+            size += 2; //writeShort(bootstrapMethodsAttrNameIndex);
+            size += 4; //writeInt(itsBootstrapMethodsLength);
+            size += 2; //writeShort(bootstrapMethods.size());
+            size += itsBootstrapMethodsLength;
         }
 
         return size;
     }
 
     /**
-     * Get the class file as array of bytesto the OutputStream.
+     * Get the class file as array of bytes.
      */
     public byte[] toByteArray()
     {
+        int attributeCount = 0;
+        short bootstrapMethodsAttrNameIndex = 0;
+        short sourceFileAttrNameIndex = 0;
+        if (itsBootstrapMethods != null) {
+            ++attributeCount;
+            bootstrapMethodsAttrNameIndex = itsConstantPool.addUtf8("BootstrapMethods");
+        }
+        if (itsSourceFileNameIndex != 0) {
+            ++attributeCount;
+            sourceFileAttrNameIndex = itsConstantPool.addUtf8("SourceFile");
+        }
+
         int dataSize = getWriteSize();
         byte[] data = new byte[dataSize];
         int offset = 0;
-
-        short sourceFileAttributeNameIndex = 0;
-        if (itsSourceFileNameIndex != 0) {
-            sourceFileAttributeNameIndex = itsConstantPool.addUtf8(
-                                               "SourceFile");
-        }
 
         offset = putInt32(FileHeaderConstant, data, offset);
         offset = putInt16(MinorVersion, data, offset);
@@ -2808,13 +2873,21 @@ public class ClassFileWriter {
             ClassFileMethod method = (ClassFileMethod)itsMethods.get(i);
             offset = method.write(data, offset);
         }
+        offset = putInt16(attributeCount, data, offset); // attributes count
+        if (itsBootstrapMethods != null) {
+            offset = putInt16(bootstrapMethodsAttrNameIndex, data, offset);
+            offset = putInt32(itsBootstrapMethodsLength + 2, data, offset);
+            offset = putInt16(itsBootstrapMethods.size(), data, offset);
+            for (int i = 0; i < itsBootstrapMethods.size(); i++) {
+                BootstrapEntry entry = (BootstrapEntry) itsBootstrapMethods.get(i);
+                System.arraycopy(entry.code, 0, data, offset, entry.code.length);
+                offset += entry.code.length;
+            }
+        }
         if (itsSourceFileNameIndex != 0) {
-            offset = putInt16(1, data, offset); // attributes count
-            offset = putInt16(sourceFileAttributeNameIndex, data, offset);
+            offset = putInt16(sourceFileAttrNameIndex, data, offset);
             offset = putInt32(2, data, offset);
             offset = putInt16(itsSourceFileNameIndex, data, offset);
-        } else {
-            offset = putInt16(0, data, offset); // no attributes
         }
 
         if (offset != dataSize) {
@@ -3185,6 +3258,7 @@ public class ClassFileWriter {
 
             case ByteCode.GOTO_W:
             case ByteCode.INVOKEINTERFACE:
+            case ByteCode.INVOKEDYNAMIC:
             case ByteCode.JSR_W:
                 return 5;
 
@@ -3568,6 +3642,7 @@ public class ClassFileWriter {
             case ByteCode.INEG:
             case ByteCode.INSTANCEOF:
             case ByteCode.INVOKESTATIC:
+            case ByteCode.INVOKEDYNAMIC:
             case ByteCode.L2D:
             case ByteCode.LALOAD:
             case ByteCode.LNEG:
@@ -4063,6 +4138,7 @@ public class ClassFileWriter {
                 case ByteCode.INVOKESPECIAL:    return "invokespecial";
                 case ByteCode.INVOKESTATIC:     return "invokestatic";
                 case ByteCode.INVOKEINTERFACE:  return "invokeinterface";
+                case ByteCode.INVOKEDYNAMIC:    return "invokedynamic";
                 case ByteCode.NEW:              return "new";
                 case ByteCode.NEWARRAY:         return "newarray";
                 case ByteCode.ANEWARRAY:        return "anewarray";
@@ -4216,6 +4292,96 @@ public class ClassFileWriter {
         }
     }
 
+    final class BootstrapEntry {
+
+        final byte[] code;
+
+        BootstrapEntry(ClassFileWriter.MethodHandle bsm, Object... bsmArgs) {
+            int length = 2 + 2 + bsmArgs.length * 2;
+            code = new byte[length];
+            putInt16(itsConstantPool.addMethodHandle(bsm), code, 0);
+            putInt16(bsmArgs.length, code, 2);
+            for (int i = 0; i < bsmArgs.length; i++) {
+                putInt16(itsConstantPool.addConstant(bsmArgs[i]), code, 4 + i * 2);
+            }
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            return obj instanceof BootstrapEntry
+                    && Arrays.equals(code, ((BootstrapEntry)obj).code);
+        }
+
+        @Override
+        public int hashCode() {
+            return ~Arrays.hashCode(code);
+        }
+    }
+
+    public static final class MethodHandle {
+
+        final byte tag;
+        final String owner;
+        final String name;
+        final String desc;
+
+        public MethodHandle(byte tag, String owner, String name, String desc) {
+            this.tag = tag;
+            this.owner = owner;
+            this.name = name;
+            this.desc = desc;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this) {
+                return true;
+            }
+            if (!(obj instanceof MethodHandle)) {
+                return false;
+            }
+            MethodHandle mh = (MethodHandle)obj;
+            return tag == mh.tag && owner.equals(mh.owner)
+                    && name.equals(mh.name) && desc.equals(mh.desc);
+        }
+
+        @Override
+        public int hashCode() {
+            return tag + owner.hashCode() * name.hashCode() * desc.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return owner + '.' + name + desc + " (" + tag + ')';
+        }
+    }
+
+    public static final class MethodType {
+
+        final String desc;
+
+        public MethodType(String desc) {
+            this.desc = desc;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            return obj == this
+                    || (obj instanceof MethodType
+                        && desc.equals(((MethodType)obj).desc));
+        }
+
+        @Override
+        public int hashCode() {
+            return ~desc.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return desc;
+        }
+    }
+
     private final static int FileHeaderConstant = 0xCAFEBABE;
     // Set DEBUG flags to true to get better checking and progress info.
     private static final boolean DEBUGSTACK = false;
@@ -4259,6 +4425,8 @@ public class ClassFileWriter {
     private long[] itsFixupTable;
     private int itsFixupTableTop;
     private ObjArray itsVarDescriptors;
+    private ObjArray itsBootstrapMethods;
+    private int itsBootstrapMethodsLength = 0;
 
     private char[] tmpCharBuffer = new char[64];
 }
@@ -4421,7 +4589,10 @@ final class ConstantPool
         CONSTANT_Long = 5,
         CONSTANT_Double = 6,
         CONSTANT_NameAndType = 12,
-        CONSTANT_Utf8 = 1;
+        CONSTANT_Utf8 = 1,
+        CONSTANT_MethodType = 16,
+        CONSTANT_MethodHandle = 15,
+        CONSTANT_InvokeDynamic = 18;
 
     int write(byte[] data, int offset)
     {
@@ -4438,44 +4609,66 @@ final class ConstantPool
 
     int addConstant(int k)
     {
-        ensure(5);
-        itsPool[itsTop++] = CONSTANT_Integer;
-        itsTop = ClassFileWriter.putInt32(k, itsPool, itsTop);
-        itsPoolTypes.put(itsTopIndex, CONSTANT_Integer);
-        return (short)(itsTopIndex++);
+        ConstantEntry key = new ConstantEntry(CONSTANT_Integer, k);
+        int theIndex = itsConstantHash.get(key, -1);
+        if (theIndex == -1) {
+            ensure(5);
+            itsPool[itsTop++] = CONSTANT_Integer;
+            itsTop = ClassFileWriter.putInt32(k, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsPoolTypes.put(theIndex, CONSTANT_Integer);
+            itsConstantHash.put(key, theIndex);
+        }
+        return theIndex;
     }
 
     int addConstant(long k)
     {
-        ensure(9);
-        itsPool[itsTop++] = CONSTANT_Long;
-        itsTop = ClassFileWriter.putInt64(k, itsPool, itsTop);
-        int index = itsTopIndex;
-        itsTopIndex += 2;
-        itsPoolTypes.put(index, CONSTANT_Long);
-        return index;
+        ConstantEntry key = new ConstantEntry(CONSTANT_Long, k);
+        int theIndex = itsConstantHash.get(key, -1);
+        if (theIndex == -1) {
+            ensure(9);
+            itsPool[itsTop++] = CONSTANT_Long;
+            itsTop = ClassFileWriter.putInt64(k, itsPool, itsTop);
+            theIndex = itsTopIndex;
+            itsTopIndex += 2;
+            itsPoolTypes.put(theIndex, CONSTANT_Long);
+            itsConstantHash.put(key, theIndex);
+        }
+        return theIndex;
     }
 
     int addConstant(float k)
     {
-        ensure(5);
-        itsPool[itsTop++] = CONSTANT_Float;
         int bits = Float.floatToIntBits(k);
-        itsTop = ClassFileWriter.putInt32(bits, itsPool, itsTop);
-        itsPoolTypes.put(itsTopIndex, CONSTANT_Float);
-        return itsTopIndex++;
+        ConstantEntry key = new ConstantEntry(CONSTANT_Float, bits);
+        int theIndex = itsConstantHash.get(key, -1);
+        if (theIndex == -1) {
+            ensure(5);
+            itsPool[itsTop++] = CONSTANT_Float;
+            itsTop = ClassFileWriter.putInt32(bits, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsPoolTypes.put(theIndex, CONSTANT_Float);
+            itsConstantHash.put(key, theIndex);
+        }
+        return theIndex;
     }
 
     int addConstant(double k)
     {
-        ensure(9);
-        itsPool[itsTop++] = CONSTANT_Double;
         long bits = Double.doubleToLongBits(k);
-        itsTop = ClassFileWriter.putInt64(bits, itsPool, itsTop);
-        int index = itsTopIndex;
-        itsTopIndex += 2;
-        itsPoolTypes.put(index, CONSTANT_Double);
-        return index;
+        ConstantEntry key = new ConstantEntry(CONSTANT_Double, bits);
+        int theIndex = itsConstantHash.get(key, -1);
+        if (theIndex == -1) {
+            ensure(9);
+            itsPool[itsTop++] = CONSTANT_Double;
+            itsTop = ClassFileWriter.putInt64(bits, itsPool, itsTop);
+            theIndex = itsTopIndex;
+            itsTopIndex += 2;
+            itsPoolTypes.put(theIndex, CONSTANT_Double);
+            itsConstantHash.put(key, theIndex);
+        }
+        return theIndex;
     }
 
     int addConstant(String k)
@@ -4491,6 +4684,31 @@ final class ConstantPool
         }
         itsPoolTypes.put(theIndex, CONSTANT_String);
         return theIndex;
+    }
+
+    int addConstant(Object value) {
+        if (value instanceof Integer || value instanceof Byte
+                || value instanceof Short) {
+            return addConstant(((Number) value).intValue());
+        } else if (value instanceof Character) {
+            return addConstant(((Character) value).charValue());
+        } else if (value instanceof Boolean) {
+            return addConstant(((Boolean) value).booleanValue() ? 1 : 0);
+        } else if (value instanceof Float) {
+            return addConstant(((Float) value).floatValue());
+        } else if (value instanceof Long) {
+            return addConstant(((Long) value).longValue());
+        } else if (value instanceof Double) {
+            return addConstant(((Double) value).doubleValue());
+        } else if (value instanceof String) {
+            return addConstant((String) value);
+        } else if (value instanceof ClassFileWriter.MethodType) {
+            return addMethodType((ClassFileWriter.MethodType) value);
+        } else if (value instanceof ClassFileWriter.MethodHandle) {
+            return addMethodHandle((ClassFileWriter.MethodHandle) value);
+        } else {
+            throw new IllegalArgumentException("value " + value);
+        }
     }
 
     boolean isUnderUtfEncodingLimit(String s)
@@ -4532,7 +4750,7 @@ final class ConstantPool
 
     short addUtf8(String k)
     {
-        int theIndex = itsUtf8Hash.get(k, -1);
+        int theIndex = itsConstantHash.get(k, -1);
         if (theIndex == -1) {
             int strLen = k.length();
             boolean tooBigString;
@@ -4575,28 +4793,34 @@ final class ConstantPool
 
                     itsTop = top;
                     theIndex = itsTopIndex++;
-                    itsUtf8Hash.put(k, theIndex);
+                    itsConstantHash.put(k, theIndex);
                 }
             }
             if (tooBigString) {
                 throw new IllegalArgumentException("Too big string");
             }
+            setConstantData(theIndex, k);
+            itsPoolTypes.put(theIndex, CONSTANT_Utf8);
         }
-        setConstantData(theIndex, k);
-        itsPoolTypes.put(theIndex, CONSTANT_Utf8);
         return (short)theIndex;
     }
 
     private short addNameAndType(String name, String type)
     {
-        short nameIndex = addUtf8(name);
-        short typeIndex = addUtf8(type);
-        ensure(5);
-        itsPool[itsTop++] = CONSTANT_NameAndType;
-        itsTop = ClassFileWriter.putInt16(nameIndex, itsPool, itsTop);
-        itsTop = ClassFileWriter.putInt16(typeIndex, itsPool, itsTop);
-        itsPoolTypes.put(itsTopIndex, CONSTANT_NameAndType);
-        return (short)(itsTopIndex++);
+        ConstantEntry key = new ConstantEntry(CONSTANT_NameAndType, name, type);
+        int theIndex = itsConstantHash.get(key, -1);
+        if (theIndex == -1) {
+            short nameIndex = addUtf8(name);
+            short typeIndex = addUtf8(type);
+            ensure(5);
+            itsPool[itsTop++] = CONSTANT_NameAndType;
+            itsTop = ClassFileWriter.putInt16(nameIndex, itsPool, itsTop);
+            itsTop = ClassFileWriter.putInt16(typeIndex, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsConstantHash.put(key, theIndex);
+            itsPoolTypes.put(theIndex, CONSTANT_NameAndType);
+        }
+        return (short)theIndex;
     }
 
     short addClass(String className)
@@ -4622,9 +4846,9 @@ final class ConstantPool
                     itsClassHash.put(className, theIndex);
                 }
             }
+            setConstantData(theIndex, className);
+            itsPoolTypes.put(theIndex, CONSTANT_Class);
         }
-        setConstantData(theIndex, className);
-        itsPoolTypes.put(theIndex, CONSTANT_Class);
         return (short)theIndex;
     }
 
@@ -4633,7 +4857,7 @@ final class ConstantPool
         FieldOrMethodRef ref = new FieldOrMethodRef(className, fieldName,
                                                     fieldType);
 
-        int theIndex = itsFieldRefHash.get(ref, -1);
+        int theIndex = itsConstantHash.get(ref, -1);
         if (theIndex == -1) {
             short ntIndex = addNameAndType(fieldName, fieldType);
             short classIndex = addClass(className);
@@ -4642,10 +4866,10 @@ final class ConstantPool
             itsTop = ClassFileWriter.putInt16(classIndex, itsPool, itsTop);
             itsTop = ClassFileWriter.putInt16(ntIndex, itsPool, itsTop);
             theIndex = itsTopIndex++;
-            itsFieldRefHash.put(ref, theIndex);
+            itsConstantHash.put(ref, theIndex);
+            setConstantData(theIndex, ref);
+            itsPoolTypes.put(theIndex, CONSTANT_Fieldref);
         }
-        setConstantData(theIndex, ref);
-        itsPoolTypes.put(theIndex, CONSTANT_Fieldref);
         return (short)theIndex;
     }
 
@@ -4655,7 +4879,7 @@ final class ConstantPool
         FieldOrMethodRef ref = new FieldOrMethodRef(className, methodName,
                                                     methodType);
 
-        int theIndex = itsMethodRefHash.get(ref, -1);
+        int theIndex = itsConstantHash.get(ref, -1);
         if (theIndex == -1) {
             short ntIndex = addNameAndType(methodName, methodType);
             short classIndex = addClass(className);
@@ -4664,27 +4888,93 @@ final class ConstantPool
             itsTop = ClassFileWriter.putInt16(classIndex, itsPool, itsTop);
             itsTop = ClassFileWriter.putInt16(ntIndex, itsPool, itsTop);
             theIndex = itsTopIndex++;
-            itsMethodRefHash.put(ref, theIndex);
+            itsConstantHash.put(ref, theIndex);
+            setConstantData(theIndex, ref);
+            itsPoolTypes.put(theIndex, CONSTANT_Methodref);
         }
-        setConstantData(theIndex, ref);
-        itsPoolTypes.put(theIndex, CONSTANT_Methodref);
         return (short)theIndex;
     }
 
-    short addInterfaceMethodRef(String className,
-                                String methodName, String methodType)
+    short addInterfaceMethodRef(String className, String methodName,
+                                String methodType)
     {
-        short ntIndex = addNameAndType(methodName, methodType);
-        short classIndex = addClass(className);
-        ensure(5);
-        itsPool[itsTop++] = CONSTANT_InterfaceMethodref;
-        itsTop = ClassFileWriter.putInt16(classIndex, itsPool, itsTop);
-        itsTop = ClassFileWriter.putInt16(ntIndex, itsPool, itsTop);
-        FieldOrMethodRef r = new FieldOrMethodRef(className, methodName,
-                                                  methodType);
-        setConstantData(itsTopIndex, r);
-        itsPoolTypes.put(itsTopIndex, CONSTANT_InterfaceMethodref);
-        return (short)(itsTopIndex++);
+        FieldOrMethodRef ref = new FieldOrMethodRef(className, methodName,
+                                                    methodType);
+        int theIndex = itsConstantHash.get(ref, -1);
+        if (theIndex == -1) {
+            short ntIndex = addNameAndType(methodName, methodType);
+            short classIndex = addClass(className);
+            ensure(5);
+            itsPool[itsTop++] = CONSTANT_InterfaceMethodref;
+            itsTop = ClassFileWriter.putInt16(classIndex, itsPool, itsTop);
+            itsTop = ClassFileWriter.putInt16(ntIndex, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsConstantHash.put(ref, theIndex);
+            setConstantData(theIndex, ref);
+            itsPoolTypes.put(theIndex, CONSTANT_InterfaceMethodref);
+        }
+        return (short)theIndex;
+    }
+
+    short addInvokeDynamic(String methodName, String methodType, int bootstrapIndex)
+    {
+        ConstantEntry entry = new ConstantEntry(CONSTANT_InvokeDynamic,
+                bootstrapIndex, methodName, methodType);
+        int theIndex = itsConstantHash.get(entry, -1);
+
+        if (theIndex == -1) {
+            short nameTypeIndex = addNameAndType(methodName, methodType);
+            ensure(5);
+            itsPool[itsTop++] = CONSTANT_InvokeDynamic;
+            itsTop = ClassFileWriter.putInt16(bootstrapIndex, itsPool, itsTop);
+            itsTop = ClassFileWriter.putInt16(nameTypeIndex, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsConstantHash.put(entry, theIndex);
+            setConstantData(theIndex, methodType);
+            itsPoolTypes.put(theIndex, CONSTANT_InvokeDynamic);
+        }
+        return (short)(theIndex);
+    }
+
+    short addMethodHandle(ClassFileWriter.MethodHandle mh)
+    {
+        int theIndex = itsConstantHash.get(mh, -1);
+
+        if (theIndex == -1) {
+            short ref;
+            if (mh.tag <= ByteCode.MH_PUTSTATIC) {
+                ref = addFieldRef(mh.owner, mh.name, mh.desc);
+            } else if (mh.tag == ByteCode.MH_INVOKEINTERFACE) {
+                ref = addInterfaceMethodRef(mh.owner, mh.name, mh.desc);
+            } else {
+                ref = addMethodRef(mh.owner, mh.name, mh.desc);
+            }
+
+            ensure(4);
+            itsPool[itsTop++] = CONSTANT_MethodHandle;
+            itsPool[itsTop++] = mh.tag;
+            itsTop = ClassFileWriter.putInt16(ref, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsConstantHash.put(mh, theIndex);
+            itsPoolTypes.put(theIndex, CONSTANT_MethodHandle);
+        }
+        return (short)(theIndex);
+    }
+
+    short addMethodType(ClassFileWriter.MethodType mt)
+    {
+        int theIndex = itsConstantHash.get(mt, -1);
+
+        if (theIndex == -1) {
+            short ref = addUtf8(mt.desc);
+            ensure(3);
+            itsPool[itsTop++] = CONSTANT_MethodType;
+            itsTop = ClassFileWriter.putInt16(ref, itsPool, itsTop);
+            theIndex = itsTopIndex++;
+            itsConstantHash.put(mt, theIndex);
+            itsPoolTypes.put(theIndex, CONSTANT_MethodType);
+        }
+        return (short)(theIndex);
     }
 
     Object getConstantData(int index)
@@ -4720,9 +5010,7 @@ final class ConstantPool
     private static final int MAX_UTF_ENCODING_SIZE = 65535;
 
     private UintMap itsStringConstHash = new UintMap();
-    private ObjToIntMap itsUtf8Hash = new ObjToIntMap();
-    private ObjToIntMap itsFieldRefHash = new ObjToIntMap();
-    private ObjToIntMap itsMethodRefHash = new ObjToIntMap();
+    private ObjToIntMap itsConstantHash = new ObjToIntMap();
     private ObjToIntMap itsClassHash = new ObjToIntMap();
 
     private int itsTop;
@@ -4776,6 +5064,11 @@ final class FieldOrMethodRef
             hashCode = h1 ^ h2 ^ h3;
         }
         return hashCode;
+    }
+
+    @Override
+    public String toString() {
+        return className + "." + name + ": " + type;
     }
 
     private String className;
@@ -5176,5 +5469,75 @@ final class TypeInfo {
         System.out.print("stack: ");
         System.out.println(toString(stack, stackTop, pool));
         System.out.println();
+    }
+}
+
+final class ConstantEntry {
+
+    int type;
+    int intval;
+    long longval;
+    String str1;
+    String str2;
+    int hashcode;
+
+    ConstantEntry(int type, int intval) {
+        this.type = type;
+        this.intval = intval;
+        hashcode = type + intval;
+    }
+
+    ConstantEntry(int type, long longval) {
+        this.type = type;
+        this.longval = longval;
+        hashcode = type ^ (int)longval;
+    }
+
+    ConstantEntry(int type,String str1, String str2) {
+        this.type = type;
+        this.str1 = str1;
+        this.str2 = str2;
+        hashcode = type ^ intval + str1.hashCode() * str2.hashCode();
+    }
+
+    ConstantEntry(int type, int intval, String str1, String str2) {
+        this.type = type;
+        this.intval = intval;
+        this.str1 = str1;
+        this.str2 = str2;
+        hashcode = type ^ intval + str1.hashCode() * str2.hashCode();
+    }
+
+    @Override
+    public int hashCode() {
+        return hashcode;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof ConstantEntry)) {
+            return false;
+        }
+        ConstantEntry entry = (ConstantEntry) obj;
+        if (type != entry.type) {
+            return false;
+        }
+        switch (type) {
+            case ConstantPool.CONSTANT_Integer:
+            case ConstantPool.CONSTANT_Float:
+                return intval == entry.intval;
+            case ConstantPool.CONSTANT_Long:
+            case ConstantPool.CONSTANT_Double:
+                return longval == entry.longval;
+            case ConstantPool.CONSTANT_NameAndType:
+                return str1.equals(entry.str1) && str2.equals(entry.str2);
+            case ConstantPool.CONSTANT_InvokeDynamic:
+                return intval == entry.intval
+                        && str1.equals(entry.str1)
+                        && str2.equals(entry.str2);
+            default:
+                throw new RuntimeException("unsupported constant type");
+
+        }
     }
 }
