@@ -182,24 +182,6 @@ public abstract class ClassyScriptable extends ScriptableObject
         Object rawValue = rawGetImpl(name, start);
         return translateNullToNotFound(rawValue);
     }
-    
-    /* This is the extended version of slow get present above. This is used in inline caching.
-     * Purpose of this get is to return corresponding hidden class of object and offset 
-     * of property being accesed */
-    public Map<String,Object> extendedGet(String name, Scriptable start) {
-        
-    	Object rawValue = rawGetImpl(name, start);
-        int offsetOfKeyInHiddenClass = getoffset(name);
-        ClassyLayout typeOfHiddenClass = getTypeOfObject();
-
-        Map<String,Object> typeInforamtionMap = new HashMap<String, Object>();
-        typeInforamtionMap.put("value", rawValue);
-        typeInforamtionMap.put("type", typeOfHiddenClass);
-        typeInforamtionMap.put("offset", offsetOfKeyInHiddenClass);
-     
-        return typeInforamtionMap;
-    }
-
 
     protected Object rawGetImpl(Object name, Scriptable start) {
         // Note the straight-through branchless calling.  That makes it optimizable!
@@ -352,18 +334,9 @@ public abstract class ClassyScriptable extends ScriptableObject
         return new ClassyLayout(null);
     }
     
-    protected int getoffset(Object name){
-    	Mapping mapping = layout.findMapping(name);
-    	return mapping.offset();
-    }
-    
-    protected Object getValueAtOffset(int offset){
+    protected Object getValueAtOffset(int offset, Scriptable start) {
     	Slot slot = slots[offset];
-    	return slot.getValue(null);
-    }
-    
-    protected ClassyLayout getTypeOfObject(){
-    	return this.layout;
+    	return slot.getValue(start);
     }
 
 }

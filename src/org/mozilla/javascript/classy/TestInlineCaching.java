@@ -1,69 +1,81 @@
 package org.mozilla.javascript.classy;
 
-import java.util.Date;
+import org.mozilla.javascript.ScriptableObject;
+
 import java.util.HashMap;
 import java.util.Map;
 
-import org.junit.Test;
 
 public class TestInlineCaching extends ClassyScriptable{
 	
 	
 	static TestInlineCaching t0 = null,t1=null, t2=null, test=null;
-	static Map<String,Integer> hm;
-	static ClassyLayout possibleType = null;
-	static int possibleOffset;
-	
+	static Map<String,String> hm;
+
+        static MonomorphicInlineCache getx = new MonomorphicInlineCache();
+        static MonomorphicInlineCache gety = new MonomorphicInlineCache();
+
+    Object x = "x";
+    Object y = "y";
+
+    public Object getX() {
+        return x;
+    }
+
+    public Object getY() {
+        return y;
+    }
+
 	static{
 
 		t0 = new TestInlineCaching();
-		t0.put("x", null, 1);
-		t0.put("y", null, 2);
-		t0.put("z", null, 3);
+		t0.put("x", t0, "x");
+		t0.put("y", t0, "y");
+		t0.put("z", t0, "z");
 		
 		test = new TestInlineCaching();
-		test.put("x", null, 4);
-		test.put("y", null, 5);
-		test.put("z", null, 6);
+		test.put("x", test, "x");
+		test.put("y", test, "y");
+		test.put("z", test, "z");
 		
 		t1 = new TestInlineCaching();
-		t1.put("name", null, "rohit");
-		t1.put("x", null, 10);
-		t1.put("y", null, 20);
+		t1.put("name", t1, "rohit");
+		t1.put("x", t1, "x");
+		t1.put("y", t1, "y");
 		
 		t2 = new TestInlineCaching();
-		t2.put("name", null, "hannes");
-		t2.put("x", null, 100);
-		t2.put("y", null, 200);
+		t2.put("name", t2, "hannes");
+		t2.put("x", t2, "x");
+		t2.put("y", t2, "y");
 		
-		hm = new HashMap<String, Integer>();
-		hm.put("x",10);
-		hm.put("y",20);
+		hm = new HashMap<String, String>();
+		hm.put("x", "x");
+		hm.put("y", "y");
 		
 	}
 	
 
 	public static void main(String[] args) {
 		
-		System.out.println(lengthSquared(t0));
-		System.out.println(lengthSquared(test));
-		System.out.println(lengthSquared(t1));
-		System.out.println(lengthSquared(t2));
+		getXY(t0);
+		getXY(test);
+		getXY(t1);
+		getXY(t2);
 
-		System.out.println(lengthSquaredWithInlineCaching(t0));
-		System.out.println(lengthSquaredWithInlineCaching(test));
-		System.out.println(lengthSquaredWithInlineCaching(t1));
-		System.out.println(lengthSquaredWithInlineCaching(t2));
+		getXYWithInlineCaching(t0);
+		getXYWithInlineCaching(test);
+		getXYWithInlineCaching(t1);
+		getXYWithInlineCaching(t2);
 		
-		System.out.println(lengthSquaredWithHashMap(hm));
+		getXYWithHashMap(hm);
 
 
-		long time = 0;
+		long time;
 
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
 			for(int j=0;j<10000000;j++){
-				lengthSquared(t0);
+				getXY(t0);
 			}
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
@@ -73,7 +85,7 @@ public class TestInlineCaching extends ClassyScriptable{
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
 			for(int j=0;j<10000000;j++){
-				lengthSquaredWithInlineCaching(t0);
+				getXYWithInlineCaching(t0);
 			}
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
@@ -84,47 +96,56 @@ public class TestInlineCaching extends ClassyScriptable{
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
 			for(int j=0;j<10000000;j++){
-				lengthSquaredWithHashMap(hm);
+				getXYWithHashMap(hm);
 			}
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
 		
-		
-		
-	}
+		System.out.println();
 
-
-	private Object getWithInlineCaching(String key) {
-
-		if(possibleType == null){
-			Map<String,Object> typeInformatioMap = this.extendedGet(key, null);
-			possibleType = (ClassyLayout)typeInformatioMap.get("type");
-			possibleOffset = (Integer)typeInformatioMap.get("offset");
-			return typeInformatioMap.get("value");
-		}else{
-			ClassyLayout cuurentType = this.getTypeOfObject();
-			if(cuurentType == possibleType){
-				possibleOffset = this.getoffset(key);
-				return this.getValueAtOffset(possibleOffset);
-			}else{
-				possibleType = null;
-				return getWithInlineCaching(key);
+		for(int  i=0;i<10;i++){
+			time = System.currentTimeMillis();
+			for(int j=0;j<10000000;j++){
+				getXYFromField(t0);
 			}
+			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
-	
+
+		System.out.println();
 	}
 	
-	private static int lengthSquared(TestInlineCaching tic){
-		return (Integer)tic.get("x") * (Integer) tic.get("y");
+	private static void getXY(ScriptableObject tic){
+            tic.get("x", tic);
+            tic.get("y", tic);
 	}
 	
-	private static int lengthSquaredWithInlineCaching(TestInlineCaching tic){
-		return (Integer)tic.getWithInlineCaching("x") * (Integer) tic.getWithInlineCaching("y");
+	private static void getXYWithInlineCaching(TestInlineCaching tic){
+            getx.get(tic, "x");
+            gety.get(tic, "y");
 	}
 	
-	private static int lengthSquaredWithHashMap(Map<String,Integer> hmap){
-		return (Integer)hmap.get("x") * (Integer)hmap.get("y");
+	private static void getXYWithHashMap(Map<String,String> hmap){
+            hmap.get("x");
+            hmap.get("y");
 	}
 
+    private static void getXYFromField(TestInlineCaching tic) {
+        tic.getX();
+        tic.getY();
+    }
+
+}
+
+class MonomorphicInlineCache {
+    ClassyLayout type = null;
+    int offset;
+
+    public Object get(ClassyScriptable cs, String key) {
+        if (type == null) {
+            type = cs.getLayout();
+            offset = type.findMapping(key).offset();
+        }
+        return cs.getValueAtOffset(offset, cs);
+    }
 
 }
