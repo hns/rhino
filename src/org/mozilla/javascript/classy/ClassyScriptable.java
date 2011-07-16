@@ -339,4 +339,9 @@ public abstract class ClassyScriptable extends ScriptableObject
     	return slot.getValue(start);
     }
 
+    protected void putValueAtOffset(int offset, Scriptable start, Object value) {
+    	Slot slot = slots[offset];
+    	slot.setValue(value, this, start);
+    }
+
 }

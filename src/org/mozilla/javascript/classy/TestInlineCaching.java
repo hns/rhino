@@ -26,6 +26,14 @@ public class TestInlineCaching extends ClassyScriptable {
         return y;
     }
 
+    public void setX(Object x) {
+        this.x = x;
+    }
+
+    public void setY(Object y) {
+        this.y = y;
+    }
+
     static {
 
         t0 = new TestInlineCaching();
@@ -110,12 +118,12 @@ public class TestInlineCaching extends ClassyScriptable {
         for (int j = 0; j < 10000000; j++) {
             tic.get("x", tic);
             tic.get("y", tic);
+            tic.put("x", tic, "y");
+            tic.put("y", tic, "x");
             tic.get("x", tic);
             tic.get("y", tic);
-            tic.get("x", tic);
-            tic.get("y", tic);
-            tic.get("x", tic);
-            tic.get("y", tic);
+            tic.put("x", tic, "x");
+            tic.put("y", tic, "y");
             tic.get("x", tic);
             tic.get("y", tic);
         }
@@ -125,12 +133,12 @@ public class TestInlineCaching extends ClassyScriptable {
         for (int j = 0; j < 10000000; j++) {
             getx.get(tic, "x");
             gety.get(tic, "y");
+            getx.put(tic, "x", "y");
+            gety.put(tic, "y", "x");
             getx.get(tic, "x");
             gety.get(tic, "y");
-            getx.get(tic, "x");
-            gety.get(tic, "y");
-            getx.get(tic, "x");
-            gety.get(tic, "y");
+            getx.put(tic, "x", "x");
+            gety.put(tic, "y", "y");
             getx.get(tic, "x");
             gety.get(tic, "y");
         }
@@ -140,12 +148,12 @@ public class TestInlineCaching extends ClassyScriptable {
         for (int j = 0; j < 10000000; j++) {
             hmap.get("x");
             hmap.get("y");
+            hmap.put("x", "y");
+            hmap.put("y", "x");
             hmap.get("x");
             hmap.get("y");
-            hmap.get("x");
-            hmap.get("y");
-            hmap.get("x");
-            hmap.get("y");
+            hmap.put("x", "x");
+            hmap.put("y", "y");
             hmap.get("x");
             hmap.get("y");
         }
@@ -155,12 +163,12 @@ public class TestInlineCaching extends ClassyScriptable {
         for (int j = 0; j < 10000000; j++) {
             tic.getX();
             tic.getY();
+            tic.setX("y");
+            tic.setY("x");
             tic.getX();
             tic.getY();
-            tic.getX();
-            tic.getY();
-            tic.getX();
-            tic.getY();
+            tic.setX("x");
+            tic.setY("y");
             tic.getX();
             tic.getY();
         }
@@ -178,6 +186,15 @@ class MonomorphicInlineCache {
             offset = type.findMapping(key).offset();
         }
         return cs.getValueAtOffset(offset, cs);
+    }
+
+    public void put(ClassyScriptable cs, String key, Object value) {
+        if (type == null) {
+            type = cs.getLayout();
+            offset = type.findMapping(key).offset();
+        }
+        cs.putValueAtOffset(offset, cs, value);
+
     }
 
 }
