@@ -74,9 +74,7 @@ public class TestInlineCaching extends ClassyScriptable{
 
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
-			for(int j=0;j<10000000;j++){
-				getXY(t0);
-			}
+			getXY(t0);
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
 		
@@ -84,9 +82,7 @@ public class TestInlineCaching extends ClassyScriptable{
 		
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
-			for(int j=0;j<10000000;j++){
-				getXYWithInlineCaching(t0);
-			}
+			getXYWithInlineCaching(t0);
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
 		
@@ -95,9 +91,7 @@ public class TestInlineCaching extends ClassyScriptable{
 		
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
-			for(int j=0;j<10000000;j++){
-				getXYWithHashMap(hm);
-			}
+			getXYWithHashMap(hm);
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
 		
@@ -105,9 +99,7 @@ public class TestInlineCaching extends ClassyScriptable{
 
 		for(int  i=0;i<10;i++){
 			time = System.currentTimeMillis();
-			for(int j=0;j<10000000;j++){
-				getXYFromField(t0);
-			}
+			getXYFromField(t0);
 			System.out.print(System.currentTimeMillis() - time+"\t");
 		}
 
@@ -115,23 +107,63 @@ public class TestInlineCaching extends ClassyScriptable{
 	}
 	
 	private static void getXY(ScriptableObject tic){
-            tic.get("x", tic);
-            tic.get("y", tic);
+            for(int j=0;j<10000000;j++){
+                tic.get("x", tic);
+                tic.get("y", tic);
+                tic.get("x", tic);
+                tic.get("y", tic);
+                tic.get("x", tic);
+                tic.get("y", tic);
+                tic.get("x", tic);
+                tic.get("y", tic);
+                tic.get("x", tic);
+                tic.get("y", tic);
+            }
 	}
 	
 	private static void getXYWithInlineCaching(TestInlineCaching tic){
-            getx.get(tic, "x");
-            gety.get(tic, "y");
+            for(int j=0;j<10000000;j++){
+                getx.get(tic, "x");
+                gety.get(tic, "y");
+                getx.get(tic, "x");
+                gety.get(tic, "y");
+                getx.get(tic, "x");
+                gety.get(tic, "y");
+                getx.get(tic, "x");
+                gety.get(tic, "y");
+                getx.get(tic, "x");
+                gety.get(tic, "y");
+            }
 	}
 	
 	private static void getXYWithHashMap(Map<String,String> hmap){
-            hmap.get("x");
-            hmap.get("y");
+            for(int j=0;j<10000000;j++){
+                hmap.get("x");
+                hmap.get("y");
+                hmap.get("x");
+                hmap.get("y");
+                hmap.get("x");
+                hmap.get("y");
+                hmap.get("x");
+                hmap.get("y");
+                hmap.get("x");
+                hmap.get("y");
+            }
 	}
 
     private static void getXYFromField(TestInlineCaching tic) {
-        tic.getX();
-        tic.getY();
+        for(int j=0;j<10000000;j++){
+            tic.getX();
+            tic.getY();
+            tic.getX();
+            tic.getY();
+            tic.getX();
+            tic.getY();
+            tic.getX();
+            tic.getY();
+            tic.getX();
+            tic.getY();
+        }
     }
 
 }
