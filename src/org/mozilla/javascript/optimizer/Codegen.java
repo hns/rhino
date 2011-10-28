@@ -46,6 +46,7 @@
 package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
+import org.mozilla.javascript.ast.AstNode;
 import org.mozilla.javascript.ast.FunctionNode;
 import org.mozilla.javascript.ast.Jump;
 import org.mozilla.javascript.ast.Name;
@@ -1353,6 +1354,9 @@ public class Codegen implements Evaluator
     String mainClassName;
     String mainClassSignature;
 
+    Map<AstNode, Map<String, Integer>> bindings =
+            new HashMap<AstNode, Map<String, Integer>>();
+
     private double[] itsConstantList;
     private int itsConstantListSize;
 }
@@ -1386,6 +1390,21 @@ class BodyCodegen
                     codegen.getBodyMethodSignature(scriptOrFn),
                     (short)(ClassFileWriter.ACC_STATIC
                             | ClassFileWriter.ACC_PRIVATE));
+            if (fnCurrent != null) {
+                if (!hasVarsInRegs) {
+                    // create activation bindings
+                    createBindings(scriptOrFn);
+                }
+                bindings = new ArrayList<Map<String, Integer>>();
+                AstNode fn = scriptOrFn;
+                while (fn != null) {
+                    Map<String, Integer> scope = codegen.bindings.get(fn);
+                    if (scope != null) {
+                        bindings.add(scope);
+                    }
+                    fn = fn.getEnclosingFunction();
+                }
+            }
         }
 
         generatePrologue();
@@ -1405,6 +1424,24 @@ class BodyCodegen
             // return a generator object
             generateGenerator();
         }
+    }
+
+    private void createBindings(ScriptNode scriptOrFn) {
+        Map<String, Integer> bindings = new HashMap<String, Integer>();
+        int paramCount = scriptOrFn.getParamCount();
+        int count = scriptOrFn.getParamAndVarCount();
+        for (int i = 0; i < paramCount; i++) {
+            bindings.put(scriptOrFn.getParamOrVarName(i), Integer.valueOf(i));
+        }
+        // check if a parameter shadows the argument object
+        boolean shadowedArguments = bindings.containsKey("arguments");
+        for (int i = paramCount; i < count; i++) {
+            bindings.put(scriptOrFn.getParamOrVarName(i), Integer.valueOf(i));
+        }
+        if (!shadowedArguments) {
+            bindings.put("arguments", Integer.valueOf(-1));
+        }
+        codegen.bindings.put(scriptOrFn, bindings);
     }
 
     // This creates a the user-facing function that returns a NativeGenerator
@@ -1439,7 +1476,7 @@ class BodyCodegen
         cfw.addALoad(funObjLocal);
         cfw.addALoad(variableObjectLocal);
         cfw.addALoad(argsLocal);
-        addScriptRuntimeInvoke("createFunctionActivation",
+        addScriptRuntimeInvoke("createOptFunctionActivation",
                                "(Lorg/mozilla/javascript/NativeFunction;"
                                +"Lorg/mozilla/javascript/Scriptable;"
                                +"[Ljava/lang/Object;"
@@ -1469,7 +1506,7 @@ class BodyCodegen
                 Codegen.DIRECT_CALL_PARENT_FIELD,
                 codegen.mainClassSignature);
 
-        generateNestedFunctionInits();
+        generateNestedFunctionInits(null);
 
         // create the NativeGenerator object that we return
         cfw.addALoad(variableObjectLocal);
@@ -1486,7 +1523,7 @@ class BodyCodegen
         cfw.stopMethod((short)(localsMax + 1));
     }
 
-    private void generateNestedFunctionInits()
+    private void generateNestedFunctionInits(Map<String, Integer> scope)
     {
         int functionCount = scriptOrFn.getFunctionCount();
         for (int i = 0; i != functionCount; i++) {
@@ -1494,7 +1531,7 @@ class BodyCodegen
             if (ofn.fnode.getFunctionType()
                     == FunctionNode.FUNCTION_STATEMENT)
             {
-                visitFunction(ofn, FunctionNode.FUNCTION_STATEMENT);
+                visitFunction(ofn, FunctionNode.FUNCTION_STATEMENT, scope);
             }
         }
     }
@@ -1729,14 +1766,15 @@ class BodyCodegen
         if (isGenerator)
             return;
 
-
+        Map<String, Integer> scope = null;
         String debugVariableName;
         if (fnCurrent != null) {
+            scope = codegen.bindings.get(scriptOrFn);
             debugVariableName = "activation";
             cfw.addALoad(funObjLocal);
             cfw.addALoad(variableObjectLocal);
             cfw.addALoad(argsLocal);
-            addScriptRuntimeInvoke("createFunctionActivation",
+            addScriptRuntimeInvoke("createOptFunctionActivation",
                                    "(Lorg/mozilla/javascript/NativeFunction;"
                                    +"Lorg/mozilla/javascript/Scriptable;"
                                    +"[Ljava/lang/Object;"
@@ -1768,7 +1806,7 @@ class BodyCodegen
         epilogueLabel = cfw.acquireLabel();
         cfw.markLabel(enterAreaStartLabel);
 
-        generateNestedFunctionInits();
+        generateNestedFunctionInits(scope);
 
         // default is to generate debug info
         if (compilerEnv.isGenerateDebugInfo()) {
@@ -1995,7 +2033,7 @@ class BodyCodegen
                 OptFunctionNode ofn = OptFunctionNode.get(scriptOrFn, fnIndex);
                 int t = ofn.fnode.getFunctionType();
                 if (t == FunctionNode.FUNCTION_EXPRESSION_STATEMENT) {
-                    visitFunction(ofn, t);
+                    visitFunction(ofn, t, null);
                 } else {
                     if (t != FunctionNode.FUNCTION_STATEMENT) {
                         throw Codegen.badTree();
@@ -2284,21 +2322,35 @@ class BodyCodegen
                     if (t != FunctionNode.FUNCTION_EXPRESSION) {
                         throw Codegen.badTree();
                     }
-                    visitFunction(ofn, t);
+                    visitFunction(ofn, t, null);
                 }
                 break;
 
               case Token.NAME:
                 {
+                    String name = node.getString();
+                    // try to statically resolve name in activation scopes
+                    int activationDepth = -1, activationIndex = -1;
+                    int length = bindings == null ? 0 : bindings.size();
+                    for (int i = 0; i < length; i++) {
+                        Map<String, Integer> binding = bindings.get(i);
+                        if (binding.containsKey(name)) {
+                            activationDepth = i;
+                            activationIndex = binding.get(name).intValue();
+                            break;
+                        }
+                    }
                     cfw.addALoad(contextLocal);
                     cfw.addALoad(variableObjectLocal);
-                    cfw.addPush(node.getString());
+                    cfw.addPush(name);
+                    cfw.addPush(activationDepth);
+                    cfw.addPush(activationIndex);
                     addScriptRuntimeInvoke(
                         "name",
                         "(Lorg/mozilla/javascript/Context;"
                         +"Lorg/mozilla/javascript/Scriptable;"
                         +"Ljava/lang/String;"
-                        +")Ljava/lang/Object;");
+                        +"II)Ljava/lang/Object;");
                 }
                 break;
 
@@ -2762,16 +2814,26 @@ class BodyCodegen
                         generateExpression(child, node);
                         child = child.getNext();
                     }
+                    int activationDepth = -1;
+                    String name = node.getString();
+                    int length = bindings == null ? 0 : bindings.size();
+                    for (int i = 0; i < length; i++) {
+                        if (bindings.get(i).containsKey(name)) {
+                            activationDepth = i;
+                            break;
+                        }
+                    }
                     // Generate code for "ScriptRuntime.bind(varObj, "s")"
                     cfw.addALoad(contextLocal);
                     cfw.addALoad(variableObjectLocal);
                     cfw.addPush(node.getString());
+                    cfw.addPush(activationDepth);
                     addScriptRuntimeInvoke(
                         "bind",
                         "(Lorg/mozilla/javascript/Context;"
                         +"Lorg/mozilla/javascript/Scriptable;"
                         +"Ljava/lang/String;"
-                        +")Lorg/mozilla/javascript/Scriptable;");
+                        +"I)Lorg/mozilla/javascript/Scriptable;");
                 }
                 break;
 
@@ -3053,7 +3115,8 @@ class BodyCodegen
         }
     }
 
-    private void visitFunction(OptFunctionNode ofn, int functionType)
+    private void visitFunction(OptFunctionNode ofn, int functionType,
+                               Map<String, Integer> scope)
     {
         int fnIndex = codegen.getIndex(ofn.fnode);
         cfw.add(ByteCode.NEW, codegen.mainClassName);
@@ -3104,6 +3167,20 @@ class BodyCodegen
             // Leave closure object on stack and do not pass it to
             // initFunction which suppose to connect statements to scope
             return;
+        }
+        if (scope != null) {
+            cfw.add(ByteCode.DUP);
+            String name = ofn.fnode.getName();
+            if (name != null && scope.containsKey(name)) {
+                cfw.addALoad(variableObjectLocal);
+                cfw.add(ByteCode.CHECKCAST, "org.mozilla.javascript.optimizer.OptCall");
+                cfw.add(ByteCode.SWAP);
+                cfw.addPush(scope.get(name).intValue());
+                cfw.add(ByteCode.SWAP);
+                cfw.addInvoke(ByteCode.INVOKEVIRTUAL,
+                        "org.mozilla.javascript.optimizer.OptCall", "set",
+                        "(ILjava/lang/Object;)V");
+            }
         }
         cfw.addPush(functionType);
         cfw.addALoad(variableObjectLocal);
@@ -3327,9 +3404,22 @@ class BodyCodegen
             if (childType == Token.NAME) {
                 // name() call
                 String name = child.getString();
+                int activationDepth = -1, activationIndex = -1;
+                int length = bindings == null ? 0 : bindings.size();
+                for (int i = 0; i < length; i++) {
+                    Map<String, Integer> binding = bindings.get(i);
+                    if (binding.containsKey(name)) {
+                        activationDepth = i;
+                        activationIndex = binding.get(name).intValue();
+                        break;
+                    }
+                }
                 cfw.addPush(name);
+                cfw.addPush(activationDepth);
+                cfw.addPush(activationIndex);
                 methodName = "callName0";
                 signature = "(Ljava/lang/String;"
+                            +"II"
                             +"Lorg/mozilla/javascript/Context;"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +")Ljava/lang/Object;";
@@ -3364,11 +3454,25 @@ class BodyCodegen
             // is not affected by arguments evaluation and currently
             // there are no checks for it
             String name = child.getString();
+            int activationDepth = -1, activationIndex = -1;
+            int length = bindings == null ? 0 : bindings.size();
+            for (int i = 0; i < length; i++) {
+                Map<String, Integer> binding = bindings.get(i);
+                if (binding.containsKey(name)) {
+                    activationDepth = i;
+                    activationIndex = binding.get(name).intValue();
+                    break;
+                }
+            }
+
             generateCallArgArray(node, firstArgChild, false);
             cfw.addPush(name);
+            cfw.addPush(activationDepth);
+            cfw.addPush(activationIndex);
             methodName = "callName";
             signature = "([Ljava/lang/Object;"
                         +"Ljava/lang/String;"
+                        +"II"
                         +"Lorg/mozilla/javascript/Context;"
                         +"Lorg/mozilla/javascript/Scriptable;"
                         +")Ljava/lang/Object;";
@@ -4338,11 +4442,24 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
                 return;
             }
         }
+        String name = node.getString();
+        int activationDepth = -1, activationIndex = -1;
+        int length = bindings == null ? 0 : bindings.size();
+        for (int i = 0; i < length; i++) {
+            Map<String, Integer> binding = bindings.get(i);
+            if (binding.containsKey(name)) {
+                activationDepth = i;
+                activationIndex = binding.get(name).intValue();
+                break;
+            }
+        }
         cfw.addALoad(variableObjectLocal);
-        cfw.addPush(node.getString());
+        cfw.addPush(name);
+        cfw.addPush(activationDepth);
+        cfw.addPush(activationIndex);
         addScriptRuntimeInvoke("typeofName",
                                "(Lorg/mozilla/javascript/Scriptable;"
-                               +"Ljava/lang/String;"
+                               +"Ljava/lang/String;II"
                                +")Ljava/lang/String;");
     }
 
@@ -4435,15 +4552,29 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             }
             break;
           case Token.NAME:
+            String name = child.getString();
+            int activationDepth = -1, activationIndex = -1;
+            int length = bindings == null ? 0 : bindings.size();
+            for (int i = 0; i < length; i++) {
+                Map<String, Integer> binding = bindings.get(i);
+                if (binding.containsKey(name)) {
+                    activationDepth = i;
+                    activationIndex = binding.get(name).intValue();
+                    break;
+                }
+            }
+
             cfw.addALoad(variableObjectLocal);
-            cfw.addPush(child.getString());          // push name
+            cfw.addPush(name);          // push name
             cfw.addALoad(contextLocal);
             cfw.addPush(incrDecrMask);
+            cfw.addPush(activationDepth);
+            cfw.addPush(activationIndex);
             addScriptRuntimeInvoke("nameIncrDecr",
                 "(Lorg/mozilla/javascript/Scriptable;"
                 +"Ljava/lang/String;"
                 +"Lorg/mozilla/javascript/Context;"
-                +"I)Ljava/lang/Object;");
+                +"III)Ljava/lang/Object;");
             break;
           case Token.GETPROPNOWARN:
             throw Kit.codeBug();
@@ -4848,13 +4979,25 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             generateExpression(child, node);
             child = child.getNext();
         }
+
+        int activationIndex = -1;
+        int length = bindings == null ? 0 : bindings.size();
+        for (int depth = 0; depth < length; depth++) {
+            Map<String, Integer> scope = bindings.get(depth);
+            if (scope.containsKey(name)) {
+                activationIndex = scope.get(name);
+                break;
+            }
+        }
+
+        cfw.addPush(activationIndex);
         cfw.addALoad(contextLocal);
         cfw.addALoad(variableObjectLocal);
         cfw.addPush(name);
         addScriptRuntimeInvoke(
             "setName",
             "(Lorg/mozilla/javascript/Scriptable;"
-            +"Ljava/lang/Object;"
+            +"Ljava/lang/Object;I"
             +"Lorg/mozilla/javascript/Context;"
             +"Lorg/mozilla/javascript/Scriptable;"
             +"Ljava/lang/String;"
@@ -5472,6 +5615,8 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
     private int maxStack = 0;
 
     private Map<Node,FinallyReturnPoint> finallys;
+
+    private List<Map<String, Integer>> bindings;
 
     static class FinallyReturnPoint {
         public List<Integer> jsrPoints  = new ArrayList<Integer>();

@@ -56,6 +56,7 @@ import java.util.Locale;
 import java.util.ResourceBundle;
 
 import org.mozilla.javascript.ast.FunctionNode;
+import org.mozilla.javascript.optimizer.OptCall;
 import org.mozilla.javascript.xml.XMLObject;
 import org.mozilla.javascript.xml.XMLLib;
 
@@ -1084,7 +1085,7 @@ public class ScriptRuntime {
                                        String constructorName, Object[] args)
     {
         scope = ScriptableObject.getTopLevelScope(scope);
-        Function ctor = getExistingCtor(cx, scope, constructorName);
+        Function ctor = getExistingCtor(scope, constructorName);
         if (args == null) { args = ScriptRuntime.emptyArgs; }
         return ctor.construct(cx, scope, args);
     }
@@ -1094,7 +1095,7 @@ public class ScriptRuntime {
                                               Object[] args)
     {
         scope = ScriptableObject.getTopLevelScope(scope);
-        Function ctor = TopLevel.getBuiltinCtor(cx, scope, type);
+        Function ctor = TopLevel.getBuiltinCtor(scope, type);
         if (args == null) { args = ScriptRuntime.emptyArgs; }
         return ctor.construct(cx, scope, args);
     }
@@ -1286,8 +1287,7 @@ public class ScriptRuntime {
         return ScriptableObject.getProperty(scope, id);
     }
 
-    static Function getExistingCtor(Context cx, Scriptable scope,
-                                    String constructorName)
+    static Function getExistingCtor(Scriptable scope, String constructorName)
     {
         Object ctorVal = ScriptableObject.getProperty(scope, constructorName);
         if (ctorVal instanceof Function) {
@@ -1743,10 +1743,16 @@ public class ScriptRuntime {
         return wrapBoolean(result);
     }
 
+    public static Object name(Context cx, Scriptable scope, String name)
+    {
+        return name(cx, scope, name, -1, -1);
+    }
+
     /**
      * Looks up a name in the scope chain and returns its value.
      */
-    public static Object name(Context cx, Scriptable scope, String name)
+    public static Object name(Context cx, Scriptable scope, String name,
+                              int activationDepth, int activationIndex)
     {
         Scriptable parent = scope.getParentScope();
         if (parent == null) {
@@ -1757,11 +1763,13 @@ public class ScriptRuntime {
             return result;
         }
 
-        return nameOrFunction(cx, scope, parent, name, false);
+        return nameOrFunction(cx, scope, parent, name, activationDepth,
+                activationIndex, false);
     }
 
     private static Object nameOrFunction(Context cx, Scriptable scope,
                                          Scriptable parentScope, String name,
+                                         int activationDepth, int activationIndex,
                                          boolean asFunctionCall)
     {
         Object result;
@@ -1790,6 +1798,13 @@ public class ScriptRuntime {
                         break;
                     }
                 }
+            } else if (scope instanceof OptCall && activationDepth-- == 0) {
+                result = ((OptCall)scope).get(activationIndex);
+                if (asFunctionCall) {
+                    thisObj = ScriptableObject.
+                            getTopLevelScope(parentScope);
+                }
+                break;
             } else if (scope instanceof NativeCall) {
                 // NativeCall does not prototype chain and Scriptable.get
                 // can be called directly.
@@ -1851,6 +1866,10 @@ public class ScriptRuntime {
         return ScriptableObject.getProperty(scope, name);
     }
 
+    public static Scriptable bind(Context cx, Scriptable scope, String id) {
+        return bind(cx, scope, id, -1);
+    }
+
 
     /**
      * Returns the object in the scope chain that has a given property.
@@ -1865,7 +1884,8 @@ public class ScriptRuntime {
      *
      * See ECMA 10.1.4
      */
-    public static Scriptable bind(Context cx, Scriptable scope, String id)
+    public static Scriptable bind(Context cx, Scriptable scope, String id,
+                                  int activationDepth)
     {
         Scriptable firstXMLObject = null;
         Scriptable parent = scope.getParentScope();
@@ -1893,7 +1913,9 @@ public class ScriptRuntime {
                 }
             }
             for (;;) {
-                if (ScriptableObject.hasProperty(scope, id)) {
+                if (scope instanceof OptCall) {
+                    if (activationDepth-- == 0) return scope;
+                } else if (ScriptableObject.hasProperty(scope, id)) {
                     return scope;
                 }
                 scope = parent;
@@ -1918,10 +1940,21 @@ public class ScriptRuntime {
     public static Object setName(Scriptable bound, Object value,
                                  Context cx, Scriptable scope, String id)
     {
+        return setName(bound, value, -1, cx, scope, id);
+    }
+
+    public static Object setName(Scriptable bound, Object value,
+                                 int activationIndex,
+                                 Context cx, Scriptable scope, String id)
+    {
+        // TODO: we used to special-case XMLObject here, but putProperty
+        // seems to work for E4X and it's better to optimize  the common case
         if (bound != null) {
-            // TODO: we used to special-case XMLObject here, but putProperty
-            // seems to work for E4X and it's better to optimize  the common case
-            ScriptableObject.putProperty(bound, id, value);
+            if (bound instanceof OptCall && activationIndex > -1) {
+                ((OptCall)bound).set(activationIndex, value);
+            } else {
+                ScriptableObject.putProperty(bound, id, value);
+            }
         } else {
             // "newname = 7;", where 'newname' has not yet
             // been defined, creates a new property in the
@@ -2184,6 +2217,12 @@ public class ScriptRuntime {
         x.index = 0;
     }
 
+    public static Callable getNameFunctionAndThis(String name,
+                                                  Context cx,
+                                                  Scriptable scope) {
+        return getNameFunctionAndThis(name, cx, scope, -1, -1);
+    }
+
     /**
      * Prepare for calling name(...): return function corresponding to
      * name and make current top scope available
@@ -2193,7 +2232,9 @@ public class ScriptRuntime {
      */
     public static Callable getNameFunctionAndThis(String name,
                                                   Context cx,
-                                                  Scriptable scope)
+                                                  Scriptable scope,
+                                                  int activationDepth,
+                                                  int activationIndex)
     {
         Scriptable parent = scope.getParentScope();
         if (parent == null) {
@@ -2212,7 +2253,8 @@ public class ScriptRuntime {
         }
 
         // name will call storeScriptable(cx, thisObj);
-        return (Callable)nameOrFunction(cx, scope, parent, name, true);
+        return (Callable)nameOrFunction(cx, scope, parent, name,
+                activationDepth, activationIndex, true);
     }
 
     /**
@@ -2499,7 +2541,9 @@ public class ScriptRuntime {
     {
         if (arg1 == null || arg1 == Undefined.instance) {
             return ScriptRuntime.emptyArgs;
-        } else if (arg1 instanceof NativeArray || arg1 instanceof Arguments) {
+        } else if (arg1 instanceof NativeArray
+                || arg1 instanceof Arguments
+                || arg1 instanceof OptCall.Arguments) {
             return cx.getElements((Scriptable) arg1);
         } else {
             throw ScriptRuntime.typeError0("msg.arg.isnt.array");
@@ -2595,16 +2639,29 @@ public class ScriptRuntime {
         throw errorWithClassName("msg.invalid.type", value);
     }
 
+    public static String typeofName(Scriptable scope, String id)
+    {
+        return typeofName(scope, id, -1, -1);
+    }
+
+
     /**
      * The typeof operator that correctly handles the undefined case
      */
-    public static String typeofName(Scriptable scope, String id)
+    public static String typeofName(Scriptable scope, String id,
+                                    int activationDepth, int activationIndex)
     {
         Context cx = Context.getContext();
-        Scriptable val = bind(cx, scope, id);
+        Scriptable val = bind(cx, scope, id, activationDepth);
         if (val == null)
             return "undefined";
-        return typeof(getObjectProp(val, id, cx));
+        Object value;
+        if (val instanceof OptCall && activationIndex > -1) {
+            value = ((OptCall)val).get(activationIndex);
+        } else {
+            value = getObjectProp(val, id, cx);
+        }
+        return typeof(value);
     }
 
     // neg:
@@ -2662,14 +2719,19 @@ public class ScriptRuntime {
      * @deprecated The method is only present for compatibility.
      */
     public static Object nameIncrDecr(Scriptable scopeChain, String id,
-                                      int incrDecrMask)
-    {
-        return nameIncrDecr(scopeChain, id, Context.getContext(), incrDecrMask);
+                                      int incrDecrMask) {
+        return nameIncrDecr(scopeChain, id, Context.getContext(), incrDecrMask,
+                -1, -1);
     }
 
     public static Object nameIncrDecr(Scriptable scopeChain, String id,
-                                      Context cx, int incrDecrMask)
-    {
+                                      Context cx, int incrDecrMask) {
+        return nameIncrDecr(scopeChain, id, cx, incrDecrMask, -1, -1);
+    }
+
+    public static Object nameIncrDecr(Scriptable scopeChain, String id,
+                                      Context cx, int incrDecrMask,
+                                      int activationDepth, int activationIndex) {
         Scriptable target;
         Object value;
       search: {
@@ -2678,23 +2740,28 @@ public class ScriptRuntime {
                     scopeChain = checkDynamicScope(cx.topCallScope, scopeChain);
                 }
                 target = scopeChain;
-                do {
-                    if (target instanceof NativeWith &&
-                            target.getPrototype() instanceof XMLObject) {
-                        break;
-                    }
-                    value = target.get(id, scopeChain);
-                    if (value != Scriptable.NOT_FOUND) {
-                        break search;
-                    }
-                    target = target.getPrototype();
-                } while (target != null);
+                if (target instanceof OptCall && activationDepth-- == 0) {
+                    value = ((OptCall) target).get(activationIndex);
+                    break search;
+                } else {
+                    do {
+                        if (target instanceof NativeWith &&
+                                target.getPrototype() instanceof XMLObject) {
+                            break;
+                        }
+                        value = target.get(id, scopeChain);
+                        if (value != Scriptable.NOT_FOUND) {
+                            break search;
+                        }
+                        target = target.getPrototype();
+                    } while (target != null);
+                }
                 scopeChain = scopeChain.getParentScope();
             } while (scopeChain != null);
             throw notFoundError(scopeChain, id);
         }
         return doScriptableIncrDecr(target, id, scopeChain, value,
-                                    incrDecrMask);
+                                    incrDecrMask, activationIndex);
     }
 
     public static Object propIncrDecr(Object obj, String id,
@@ -2719,14 +2786,15 @@ public class ScriptRuntime {
             return NaNobj;
         }
         return doScriptableIncrDecr(target, id, start, value,
-                                    incrDecrMask);
+                                    incrDecrMask, -1);
     }
 
     private static Object doScriptableIncrDecr(Scriptable target,
                                                String id,
                                                Scriptable protoChainStart,
                                                Object value,
-                                               int incrDecrMask)
+                                               int incrDecrMask,
+                                               int activationIndex)
     {
         boolean post = ((incrDecrMask & Node.POST_FLAG) != 0);
         double number;
@@ -2745,7 +2813,11 @@ public class ScriptRuntime {
             --number;
         }
         Number result = wrapNumber(number);
-        target.put(id, protoChainStart, result);
+        if (target instanceof OptCall && activationIndex > -1) {
+            ((OptCall)target).set(activationIndex, result);
+        } else {
+            target.put(id, protoChainStart, result);
+        }
         if (post) {
             return value;
         } else {
@@ -3251,22 +3323,33 @@ public class ScriptRuntime {
         return new NativeCall(funObj, scope, args);
     }
 
+    public static Scriptable createOptFunctionActivation(NativeFunction funObj,
+                                                      Scriptable scope,
+                                                      Object[] args)
+    {
+        return new OptCall(funObj, scope, args);
+    }
 
     public static void enterActivationFunction(Context cx,
                                                Scriptable scope)
     {
         if (cx.topCallScope == null)
             throw new IllegalStateException();
-        NativeCall call = (NativeCall)scope;
-        call.parentActivationCall = cx.currentActivationCall;
-        cx.currentActivationCall = call;
+        // TODO do we need the same for OptCall?
+        if (scope instanceof NativeCall) {
+            NativeCall call = (NativeCall)scope;
+            call.parentActivationCall = cx.currentActivationCall;
+            cx.currentActivationCall = call;
+        }
     }
 
     public static void exitActivationFunction(Context cx)
     {
         NativeCall call = cx.currentActivationCall;
-        cx.currentActivationCall = call.parentActivationCall;
-        call.parentActivationCall = null;
+        if (call != null) {
+            cx.currentActivationCall = call.parentActivationCall;
+            call.parentActivationCall = null;
+        }
     }
 
     static NativeCall findFunctionActivation(Context cx, Function f)

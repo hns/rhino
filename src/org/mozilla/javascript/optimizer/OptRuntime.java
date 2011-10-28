@@ -40,6 +40,7 @@
 package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
+import org.mozilla.javascript.xml.XMLObject;
 
 public final class OptRuntime extends ScriptRuntime
 {
@@ -89,10 +90,10 @@ public final class OptRuntime extends ScriptRuntime
     /**
      * Implement name(args) call shrinking optimizer code.
      */
-    public static Object callName(Object[] args, String name,
+    public static Object callName(Object[] args, String name,  int activationDepth, int activationIndex,
                                   Context cx, Scriptable scope)
     {
-        Callable f = getNameFunctionAndThis(name, cx, scope);
+        Callable f = getNameFunctionAndThis(name, cx, scope, activationDepth, activationIndex);
         Scriptable thisObj = lastStoredScriptable(cx);
         return f.call(cx, scope, thisObj, args);
     }
@@ -100,10 +101,10 @@ public final class OptRuntime extends ScriptRuntime
     /**
      * Implement name() call shrinking optimizer code.
      */
-    public static Object callName0(String name,
+    public static Object callName0(String name, int activationDepth, int activationIndex,
                                    Context cx, Scriptable scope)
     {
-        Callable f = getNameFunctionAndThis(name, cx, scope);
+        Callable f = getNameFunctionAndThis(name, cx, scope, activationDepth, activationIndex);
         Scriptable thisObj = lastStoredScriptable(cx);
         return f.call(cx, scope, thisObj, ScriptRuntime.emptyArgs);
     }
