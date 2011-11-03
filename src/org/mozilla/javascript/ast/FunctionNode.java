@@ -115,6 +115,7 @@ public class FunctionNode extends ScriptNode {
     // codegen variables
     private int functionType;
     private boolean needsActivation;
+    private boolean containsEval;
     private boolean ignoreDynamicScope;
     private boolean isGenerator;
     private List<Node> generatorResumePoints;
@@ -312,6 +313,14 @@ public class FunctionNode extends ScriptNode {
 
     public void setRequiresActivation() {
         needsActivation = true;
+    }
+
+    public boolean containsEval() {
+        return containsEval;
+    }
+
+    public void setContainsEval() {
+        containsEval = true;
     }
 
     public boolean getIgnoreDynamicScope() {

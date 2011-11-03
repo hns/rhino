@@ -2613,7 +2613,7 @@ public class Context
 
     Scriptable topCallScope;
     boolean isContinuationsTopCall;
-    NativeCall currentActivationCall;
+    Activation currentActivationCall;
     XMLLib cachedXMLLib;
 
     // for Objects, Arrays to tag themselves as being printed out,

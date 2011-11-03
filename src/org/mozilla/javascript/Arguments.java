@@ -265,11 +265,13 @@ final class Arguments extends IdScriptableObject
             case Id_length: return lengthObj;
             case Id_caller: {
                 Object value = callerObj;
-                if (value == UniqueTag.NULL_VALUE) { value = null; }
-                else if (value == null) {
-                    NativeCall caller = activation.parentActivationCall;
+                if (value == UniqueTag.NULL_VALUE) {
+                    value = null;
+                } else if (value == null) {
+                    Activation caller = activation.getParentActivation();
                     if (caller != null) {
-                        value = caller.get("arguments", caller);
+                        // TODO this is deprecated and should be removed!
+                        value = caller.getArguments();
                     }
                 }
                 return value;

@@ -47,7 +47,7 @@ package org.mozilla.javascript;
  * @see org.mozilla.javascript.Arguments
  * @author Norris Boyd
  */
-public final class NativeCall extends IdScriptableObject
+public final class NativeCall extends IdScriptableObject implements Activation
 {
     static final long serialVersionUID = -7471457301304454454L;
 
@@ -107,6 +107,22 @@ public final class NativeCall extends IdScriptableObject
         return "Call";
     }
 
+    public Object getArguments() {
+        return get("arguments", this);
+    }
+
+    public Object getFunction() {
+        return function;
+    }
+
+    public void setParentActivation(Activation parentActivation) {
+        this.parentActivation = parentActivation;
+    }
+
+    public Activation getParentActivation() {
+        return parentActivation;
+    }
+
     @Override
     protected int findPrototypeId(String s)
     {
@@ -153,6 +169,6 @@ public final class NativeCall extends IdScriptableObject
     NativeFunction function;
     Object[] originalArgs;
 
-    transient NativeCall parentActivationCall;
+    transient Activation parentActivation;
 }
 

@@ -1,32 +1,46 @@
 package org.mozilla.javascript.optimizer;
 
+import org.mozilla.javascript.Activation;
+import org.mozilla.javascript.Context;
 import org.mozilla.javascript.NativeFunction;
+import org.mozilla.javascript.ScriptRuntime;
 import org.mozilla.javascript.Scriptable;
 import org.mozilla.javascript.ScriptableObject;
 import org.mozilla.javascript.TopLevel;
 import org.mozilla.javascript.Undefined;
+import org.mozilla.javascript.UniqueTag;
 
 import java.util.Arrays;
 
-public class OptCall extends ScriptableObject {
+public class OptCall extends ScriptableObject implements Activation {
 
     private Object[] locals;
     private Object[] originalArgs;  // actual arguments
     private Object[] args;          // copy-on-write args
 
-    private int paramCount; // number of declared parameters
+
     private int paramAndVarCount; // number of declared params + local vars
+    private int localsStart; // index of first local (var or missing arg)
     private NativeFunction function;
-    private Arguments arguments;
+    private Object arguments;
+
+    private transient Activation parentActivation;
+
+    final static int ARGUMENTS_ID = Integer.MAX_VALUE;
 
     public OptCall(NativeFunction function, Scriptable scope, Object[] args) {
         this.function = function;
+        this.originalArgs = this.args = args;
         setParentScope(scope);
         // leave prototype null
-        this.originalArgs = this.args = args;
-        this.paramCount = function.getParamCount();
+
+        int paramCount = function.getParamCount();
         this.paramAndVarCount = function.getParamAndVarCount();
-        int localsLength = paramAndVarCount - paramCount;
+        this.localsStart = Math.min(args.length, paramCount);
+
+        // Declared arguments not provided by the caller are treated as locals,
+        // i.e. they can be accessed by name  but not through the arguments object
+        int localsLength = paramAndVarCount - localsStart;
         if (localsLength > 0) {
             locals = new Object[localsLength];
             Arrays.fill(locals, 0, localsLength, Undefined.instance);
@@ -39,11 +53,11 @@ public class OptCall extends ScriptableObject {
     }
 
     public Object get(int index) {
-        if (index >= 0 && index < paramCount) {
-            return index < args.length ? args[index] : Undefined.instance;
-        } else if (index >= paramCount && index < paramAndVarCount) {
-            return locals[index - paramCount];
-        } else if (index == -1) {
+        if (index >= 0 && index < localsStart) {
+            return args[index];
+        } else if (index >= localsStart && index < paramAndVarCount) {
+            return locals[index - localsStart];
+        } else if (index == ARGUMENTS_ID) {
             return getArguments();
         } else {
             return Undefined.instance;
@@ -51,18 +65,23 @@ public class OptCall extends ScriptableObject {
     }
 
     public void set(int index, Object value) {
-        if (index >= 0 && index < paramCount && index < args.length) {
+        if (index >= 0 && index < localsStart) {
             if (args == originalArgs) {
                 copyArguments();
             }
             args[index] = value;
-        } else if (index >= paramCount && index < paramAndVarCount) {
+        } else if (index == ARGUMENTS_ID) {
+            arguments = value == null ? UniqueTag.NULL_VALUE : value;
+        } else if (index >= localsStart && index < paramAndVarCount) {
             // TODO check for const
-            locals[index - paramCount] = value;
+            locals[index - localsStart] = value;
         }
     }
 
-    private Arguments getArguments() {
+    public Object getArguments() {
+        if (arguments == UniqueTag.NULL_VALUE) {
+            return null;
+        }
         if (arguments == null) {
             synchronized (this) {
                 if (arguments == null)
@@ -78,9 +97,22 @@ public class OptCall extends ScriptableObject {
         }
     }
 
+    public Object getFunction() {
+        return function;
+    }
+
+    public void setParentActivation(Activation parentActivation) {
+        this.parentActivation = parentActivation;
+    }
+
+    public Activation getParentActivation() {
+        return parentActivation;
+    }
+
     public class Arguments extends ScriptableObject {
 
         Object constructor, length, callee;
+        boolean[] deleted;
 
         Arguments() {
             Scriptable parent = OptCall.this.getParentScope();
@@ -115,7 +147,7 @@ public class OptCall extends ScriptableObject {
 
         @Override
         public Object get(int index, Scriptable start) {
-            if (index >= 0 && index < args.length) {
+            if (hasArg(index)) {
                 return args[index];
             } else {
                 return super.get(index, start);
@@ -124,8 +156,11 @@ public class OptCall extends ScriptableObject {
 
         @Override
         public void put(int index, Scriptable start, Object value) {
-            if (index >= 0 && index < args.length) {
-                set(index, value);
+            if (hasArg(index)) {
+                if (args == originalArgs) {
+                    copyArguments();
+                }
+                args[index] = value;
             } else {
                 super.put(index, start, value);
             }
@@ -133,12 +168,31 @@ public class OptCall extends ScriptableObject {
 
         @Override
         public boolean has(int index, Scriptable start) {
-            return super.has(index, start) || (index >= 0 && index < args.length);
+            return hasArg(index) || super.has(index, start);
         }
 
         @Override
         public void delete(int index) {
-            super.delete(index);
+            if (index >= 0 && index < args.length) {
+                if (deleted == null) {
+                    createDeleted();
+                }
+                deleted[index] = true;
+            } else {
+                super.delete(index);
+            }
+        }
+
+        @Override
+        protected ScriptableObject getOwnPropertyDescriptor(Context cx, Object id) {
+            double d = ScriptRuntime.toNumber(id);
+            int index = (int) d;
+            if (d != index || !hasArg(index) || super.has(index, this)) {
+                return super.getOwnPropertyDescriptor(cx, id);
+            }
+            Scriptable scope = getParentScope();
+            if (scope == null) scope = this;
+            return buildDataDescriptor(scope, args[index], EMPTY);
         }
 
         @Override
@@ -149,6 +203,17 @@ public class OptCall extends ScriptableObject {
                 ids[i] = Integer.valueOf(i);
             }
             return ids;
+        }
+
+        private boolean hasArg(int index) {
+            return index >= 0 && index < args.length
+                    && (deleted == null || !deleted[index]);
+        }
+
+        private synchronized void createDeleted() {
+            if (deleted == null) {
+                deleted = new boolean[args.length];
+            }
         }
     }
 

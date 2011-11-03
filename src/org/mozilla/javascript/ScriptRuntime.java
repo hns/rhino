@@ -1798,13 +1798,15 @@ public class ScriptRuntime {
                         break;
                     }
                 }
-            } else if (scope instanceof OptCall && activationDepth-- == 0) {
-                result = ((OptCall)scope).get(activationIndex);
-                if (asFunctionCall) {
-                    thisObj = ScriptableObject.
-                            getTopLevelScope(parentScope);
+            } else if (scope instanceof OptCall) {
+                if (activationDepth-- == 0) {
+                    result = ((OptCall)scope).get(activationIndex);
+                    if (asFunctionCall) {
+                        thisObj = ScriptableObject.
+                                getTopLevelScope(parentScope);
+                    }
+                    break;
                 }
-                break;
             } else if (scope instanceof NativeCall) {
                 // NativeCall does not prototype chain and Scriptable.get
                 // can be called directly.
@@ -2740,9 +2742,11 @@ public class ScriptRuntime {
                     scopeChain = checkDynamicScope(cx.topCallScope, scopeChain);
                 }
                 target = scopeChain;
-                if (target instanceof OptCall && activationDepth-- == 0) {
-                    value = ((OptCall) target).get(activationIndex);
-                    break search;
+                if (target instanceof OptCall) {
+                    if (activationDepth-- == 0) {
+                        value = ((OptCall) target).get(activationIndex);
+                        break search;
+                    }
                 } else {
                     do {
                         if (target instanceof NativeWith &&
@@ -3335,30 +3339,29 @@ public class ScriptRuntime {
     {
         if (cx.topCallScope == null)
             throw new IllegalStateException();
-        // TODO do we need the same for OptCall?
-        if (scope instanceof NativeCall) {
-            NativeCall call = (NativeCall)scope;
-            call.parentActivationCall = cx.currentActivationCall;
+        if (scope instanceof Activation) {
+            Activation call = (Activation) scope;
+            call.setParentActivation(cx.currentActivationCall);
             cx.currentActivationCall = call;
         }
     }
 
     public static void exitActivationFunction(Context cx)
     {
-        NativeCall call = cx.currentActivationCall;
+        Activation call = cx.currentActivationCall;
         if (call != null) {
-            cx.currentActivationCall = call.parentActivationCall;
-            call.parentActivationCall = null;
+            cx.currentActivationCall = call.getParentActivation();
+            call.setParentActivation(null);
         }
     }
 
-    static NativeCall findFunctionActivation(Context cx, Function f)
+    static Activation findFunctionActivation(Context cx, Function f)
     {
-        NativeCall call = cx.currentActivationCall;
+        Activation call = cx.currentActivationCall;
         while (call != null) {
-            if (call.function == f)
+            if (call.getFunction() == f)
                 return call;
-            call = call.parentActivationCall;
+            call = call.getParentActivation();
         }
         return null;
     }

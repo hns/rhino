@@ -1782,6 +1782,9 @@ public final class IRFactory extends Parser
         if (type != Node.NON_SPECIALCALL) {
             // Calls to these functions require activation objects.
             setRequiresActivation();
+            if (type == Node.SPECIALCALL_EVAL) {
+                setContainsEval();
+            }
             node.putIntProp(Node.SPECIALCALL_PROP, type);
         }
         return node;

@@ -1391,7 +1391,7 @@ class BodyCodegen
                     (short)(ClassFileWriter.ACC_STATIC
                             | ClassFileWriter.ACC_PRIVATE));
             if (fnCurrent != null) {
-                if (!hasVarsInRegs) {
+                if (useOptCall) {
                     // create activation bindings
                     createBindings(scriptOrFn);
                 }
@@ -1439,7 +1439,7 @@ class BodyCodegen
             bindings.put(scriptOrFn.getParamOrVarName(i), Integer.valueOf(i));
         }
         if (!shadowedArguments) {
-            bindings.put("arguments", Integer.valueOf(-1));
+            bindings.put("arguments", Integer.valueOf(OptCall.ARGUMENTS_ID));
         }
         codegen.bindings.put(scriptOrFn, bindings);
     }
@@ -1476,7 +1476,9 @@ class BodyCodegen
         cfw.addALoad(funObjLocal);
         cfw.addALoad(variableObjectLocal);
         cfw.addALoad(argsLocal);
-        addScriptRuntimeInvoke("createOptFunctionActivation",
+        String methodName = useOptCall ?
+                "createOptFunctionActivation" : "createFunctionActivation";
+        addScriptRuntimeInvoke(methodName,
                                "(Lorg/mozilla/javascript/NativeFunction;"
                                +"Lorg/mozilla/javascript/Scriptable;"
                                +"[Ljava/lang/Object;"
@@ -1552,6 +1554,7 @@ class BodyCodegen
             }
             inDirectCallFunction = fnCurrent.isTargetOfDirectCall();
             if (inDirectCallFunction && !hasVarsInRegs) Codegen.badTree();
+            useOptCall = !hasVarsInRegs && !fnCurrent.fnode.containsEval();
         } else {
             fnCurrent = null;
             hasVarsInRegs = false;
@@ -1774,7 +1777,9 @@ class BodyCodegen
             cfw.addALoad(funObjLocal);
             cfw.addALoad(variableObjectLocal);
             cfw.addALoad(argsLocal);
-            addScriptRuntimeInvoke("createOptFunctionActivation",
+            String methodName = useOptCall ?
+                    "createOptFunctionActivation" : "createFunctionActivation";
+            addScriptRuntimeInvoke(methodName,
                                    "(Lorg/mozilla/javascript/NativeFunction;"
                                    +"Lorg/mozilla/javascript/Scriptable;"
                                    +"[Ljava/lang/Object;"
@@ -5588,6 +5593,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
 
     private int itsLineNumber;
 
+    private boolean useOptCall;
     private boolean hasVarsInRegs;
     private short[] varRegisters;
     private boolean inDirectCallFunction;

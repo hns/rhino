@@ -503,10 +503,10 @@ public class BaseFunction extends IdScriptableObject implements Function
           return value;
       }
       Context cx = Context.getContext();
-      NativeCall activation = ScriptRuntime.findFunctionActivation(cx, this);
+      Activation activation = ScriptRuntime.findFunctionActivation(cx, this);
       return (activation == null)
              ? null
-             : activation.get("arguments", activation);
+             : activation.getArguments();
     }
 
     private static Object jsConstructor(Context cx, Scriptable scope,
