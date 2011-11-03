@@ -1510,7 +1510,7 @@ class BodyCodegen
                 Codegen.DIRECT_CALL_PARENT_FIELD,
                 codegen.mainClassSignature);
 
-        generateNestedFunctionInits(null);
+        generateNestedFunctionInits();
 
         // create the NativeGenerator object that we return
         cfw.addALoad(variableObjectLocal);
@@ -1527,7 +1527,7 @@ class BodyCodegen
         cfw.stopMethod((short)(localsMax + 1));
     }
 
-    private void generateNestedFunctionInits(Map<String, Integer> scope)
+    private void generateNestedFunctionInits()
     {
         int functionCount = scriptOrFn.getFunctionCount();
         for (int i = 0; i != functionCount; i++) {
@@ -1535,7 +1535,7 @@ class BodyCodegen
             if (ofn.fnode.getFunctionType()
                     == FunctionNode.FUNCTION_STATEMENT)
             {
-                visitFunction(ofn, FunctionNode.FUNCTION_STATEMENT, scope);
+                visitFunction(ofn, FunctionNode.FUNCTION_STATEMENT);
             }
         }
     }
@@ -1771,10 +1771,8 @@ class BodyCodegen
         if (isGenerator)
             return;
 
-        Map<String, Integer> scope = null;
         String debugVariableName;
         if (fnCurrent != null) {
-            scope = codegen.bindings.get(scriptOrFn);
             debugVariableName = "activation";
             cfw.addALoad(funObjLocal);
             cfw.addALoad(variableObjectLocal);
@@ -1813,7 +1811,7 @@ class BodyCodegen
         epilogueLabel = cfw.acquireLabel();
         cfw.markLabel(enterAreaStartLabel);
 
-        generateNestedFunctionInits(scope);
+        generateNestedFunctionInits();
 
         // default is to generate debug info
         if (compilerEnv.isGenerateDebugInfo()) {
@@ -2040,7 +2038,7 @@ class BodyCodegen
                 OptFunctionNode ofn = OptFunctionNode.get(scriptOrFn, fnIndex);
                 int t = ofn.fnode.getFunctionType();
                 if (t == FunctionNode.FUNCTION_EXPRESSION_STATEMENT) {
-                    visitFunction(ofn, t, null);
+                    visitFunction(ofn, t);
                 } else {
                     if (t != FunctionNode.FUNCTION_STATEMENT) {
                         throw Codegen.badTree();
@@ -2329,7 +2327,7 @@ class BodyCodegen
                     if (t != FunctionNode.FUNCTION_EXPRESSION) {
                         throw Codegen.badTree();
                     }
-                    visitFunction(ofn, t, null);
+                    visitFunction(ofn, t);
                 }
                 break;
 
@@ -3122,8 +3120,7 @@ class BodyCodegen
         }
     }
 
-    private void visitFunction(OptFunctionNode ofn, int functionType,
-                               Map<String, Integer> scope)
+    private void visitFunction(OptFunctionNode ofn, int functionType)
     {
         int fnIndex = codegen.getIndex(ofn.fnode);
         cfw.add(ByteCode.NEW, codegen.mainClassName);
@@ -3175,26 +3172,22 @@ class BodyCodegen
             // initFunction which suppose to connect statements to scope
             return;
         }
-        if (scope != null) {
-            cfw.add(ByteCode.DUP);
-            String name = ofn.fnode.getName();
-            if (name != null && scope.containsKey(name)) {
-                cfw.addALoad(variableObjectLocal);
-                cfw.add(ByteCode.CHECKCAST, "org.mozilla.javascript.optimizer.OptCall");
-                cfw.add(ByteCode.SWAP);
-                cfw.addPush(scope.get(name).intValue());
-                cfw.add(ByteCode.SWAP);
-                cfw.addInvoke(ByteCode.INVOKEVIRTUAL,
-                        "org.mozilla.javascript.optimizer.OptCall", "set",
-                        "(ILjava/lang/Object;)V");
+
+        int activationIndex = -1;
+        if (fnCurrent != null) {
+            Map<String, Integer> binding = codegen.bindings.get(scriptOrFn);
+            if (binding != null) {
+                Integer i = binding.get(ofn.fnode.getName());
+                if (i != null) activationIndex = i.intValue();
             }
         }
         cfw.addPush(functionType);
+        cfw.addPush(activationIndex);
         cfw.addALoad(variableObjectLocal);
         cfw.addALoad(contextLocal);           // load 'cx'
         addOptRuntimeInvoke("initFunction",
                             "(Lorg/mozilla/javascript/NativeFunction;"
-                            +"I"
+                            +"II"
                             +"Lorg/mozilla/javascript/Scriptable;"
                             +"Lorg/mozilla/javascript/Context;"
                             +")V");

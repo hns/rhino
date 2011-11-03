@@ -152,8 +152,18 @@ public final class OptRuntime extends ScriptRuntime
     }
 
     public static void initFunction(NativeFunction fn, int functionType,
-                                    Scriptable scope, Context cx)
+                                    int activationIndex, Scriptable scope,
+                                    Context cx)
     {
+        if (activationIndex != -1) {
+            while (scope instanceof NativeWith) {
+                scope = scope.getParentScope();
+            }
+            if (scope instanceof OptCall) {
+                ((OptCall)scope).set(activationIndex, fn);
+                return;
+            }
+        }
         ScriptRuntime.initFunction(cx, scope, fn, functionType, false);
     }
 
