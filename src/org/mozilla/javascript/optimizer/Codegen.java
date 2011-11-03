@@ -1390,20 +1390,22 @@ class BodyCodegen
                     codegen.getBodyMethodSignature(scriptOrFn),
                     (short)(ClassFileWriter.ACC_STATIC
                             | ClassFileWriter.ACC_PRIVATE));
-            if (fnCurrent != null) {
-                if (useOptCall) {
-                    // create activation bindings
-                    createBindings(scriptOrFn);
+        }
+
+        // generate name -> index bindings for OptCall activation
+        if (fnCurrent != null) {
+            if (useOptCall) {
+                // create activation bindings
+                createBindings(scriptOrFn);
+            }
+            bindings = new ArrayList<Map<String, Integer>>();
+            AstNode fn = scriptOrFn;
+            while (fn != null) {
+                Map<String, Integer> scope = codegen.bindings.get(fn);
+                if (scope != null) {
+                    bindings.add(scope);
                 }
-                bindings = new ArrayList<Map<String, Integer>>();
-                AstNode fn = scriptOrFn;
-                while (fn != null) {
-                    Map<String, Integer> scope = codegen.bindings.get(fn);
-                    if (scope != null) {
-                        bindings.add(scope);
-                    }
-                    fn = fn.getEnclosingFunction();
-                }
+                fn = fn.getEnclosingFunction();
             }
         }
 
