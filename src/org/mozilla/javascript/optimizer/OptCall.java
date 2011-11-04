@@ -39,7 +39,7 @@ public class OptCall extends ScriptableObject implements Activation {
         this.localsStart = Math.min(args.length, paramCount);
 
         // Declared arguments not provided by the caller are treated as locals,
-        // i.e. they can be accessed by name  but not through the arguments object
+        // i.e. they can be accessed by name but not through the arguments object
         int localsLength = paramAndVarCount - localsStart;
         if (localsLength > 0) {
             locals = new Object[localsLength];
@@ -56,7 +56,9 @@ public class OptCall extends ScriptableObject implements Activation {
         if (index >= 0 && index < localsStart) {
             return args[index];
         } else if (index >= localsStart && index < paramAndVarCount) {
-            return locals[index - localsStart];
+            Object value = locals[index - localsStart];
+            return value instanceof ConstHolder ?
+                    ((ConstHolder)value).value : value;
         } else if (index == ARGUMENTS_ID) {
             return getArguments();
         } else {
@@ -73,9 +75,18 @@ public class OptCall extends ScriptableObject implements Activation {
         } else if (index == ARGUMENTS_ID) {
             arguments = value == null ? UniqueTag.NULL_VALUE : value;
         } else if (index >= localsStart && index < paramAndVarCount) {
-            // TODO check for const
-            locals[index - localsStart] = value;
+            int i = index - localsStart;
+            if (!(locals[i] instanceof ConstHolder)) {
+                locals[i] = value;
+            }
         }
+    }
+
+    public void setConst(int index, Object value) {
+        assert (index >= localsStart && index < paramAndVarCount);
+        assert (locals[index - localsStart] == Undefined.instance);
+
+        locals[index - localsStart] = new ConstHolder(value);
     }
 
     public Object getArguments() {
@@ -127,8 +138,6 @@ public class OptCall extends ScriptableObject implements Activation {
         public String getClassName() {
             return "Arguments";
         }
-
-        // TODO: lots of stuff to do here
 
         @Override
         public Object get(String name, Scriptable start) {
@@ -219,3 +228,10 @@ public class OptCall extends ScriptableObject implements Activation {
 
 }
 
+class ConstHolder {
+    final Object value;
+
+    public ConstHolder(Object value) {
+        this.value = value;
+    }
+}

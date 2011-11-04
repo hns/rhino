@@ -1752,7 +1752,7 @@ public class ScriptRuntime {
      * Looks up a name in the scope chain and returns its value.
      */
     public static Object name(Context cx, Scriptable scope, String name,
-                              int activationDepth, int activationIndex)
+                              int optCallLevel, int optCallIndex)
     {
         Scriptable parent = scope.getParentScope();
         if (parent == null) {
@@ -1763,13 +1763,13 @@ public class ScriptRuntime {
             return result;
         }
 
-        return nameOrFunction(cx, scope, parent, name, activationDepth,
-                activationIndex, false);
+        return nameOrFunction(cx, scope, parent, name, optCallLevel,
+                optCallIndex, false);
     }
 
     private static Object nameOrFunction(Context cx, Scriptable scope,
                                          Scriptable parentScope, String name,
-                                         int activationDepth, int activationIndex,
+                                         int optCallLevel, int optCallIndex,
                                          boolean asFunctionCall)
     {
         Object result;
@@ -1799,8 +1799,8 @@ public class ScriptRuntime {
                     }
                 }
             } else if (scope instanceof OptCall) {
-                if (activationDepth-- == 0) {
-                    result = ((OptCall)scope).get(activationIndex);
+                if (optCallLevel-- == 0) {
+                    result = ((OptCall)scope).get(optCallIndex);
                     if (asFunctionCall) {
                         thisObj = ScriptableObject.
                                 getTopLevelScope(parentScope);
@@ -1813,7 +1813,7 @@ public class ScriptRuntime {
                 result = scope.get(name, scope);
                 if (result != Scriptable.NOT_FOUND) {
                     if (asFunctionCall) {
-                        // ECMA 262 requires that this for nested funtions
+                        // ECMA 262 requires that this for nested functions
                         // should be top scope
                         thisObj = ScriptableObject.
                                       getTopLevelScope(parentScope);
@@ -1887,7 +1887,7 @@ public class ScriptRuntime {
      * See ECMA 10.1.4
      */
     public static Scriptable bind(Context cx, Scriptable scope, String id,
-                                  int activationDepth)
+                                  int optCallLevel)
     {
         Scriptable firstXMLObject = null;
         Scriptable parent = scope.getParentScope();
@@ -1916,7 +1916,7 @@ public class ScriptRuntime {
             }
             for (;;) {
                 if (scope instanceof OptCall) {
-                    if (activationDepth-- == 0) return scope;
+                    if (optCallLevel-- == 0) return scope;
                 } else if (ScriptableObject.hasProperty(scope, id)) {
                     return scope;
                 }
@@ -1942,18 +1942,10 @@ public class ScriptRuntime {
     public static Object setName(Scriptable bound, Object value,
                                  Context cx, Scriptable scope, String id)
     {
-        return setName(bound, value, -1, cx, scope, id);
-    }
-
-    public static Object setName(Scriptable bound, Object value,
-                                 int activationIndex,
-                                 Context cx, Scriptable scope, String id)
-    {
-        // TODO: we used to special-case XMLObject here, but putProperty
-        // seems to work for E4X and it's better to optimize  the common case
         if (bound != null) {
-            if (bound instanceof OptCall && activationIndex > -1) {
-                ((OptCall)bound).set(activationIndex, value);
+            // Optimize for activation scopes which don't have a prototype
+            if (bound instanceof Activation) {
+                bound.put(id, bound, value);
             } else {
                 ScriptableObject.putProperty(bound, id, value);
             }
@@ -1986,9 +1978,13 @@ public class ScriptRuntime {
             // {[[Put]]:undefined}, nor to a non-existent property of an
             // object whose [[Extensible]] internal property has the value
             // false. In these cases a TypeError exception is thrown (11.13.1).
-            // TODO: we used to special-case XMLObject here, but putProperty
-            // seems to work for E4X and we should optimize  the common case
-            ScriptableObject.putProperty(bound, id, value);
+
+            // Optimize for activation scopes which don't have a prototype
+            if (bound instanceof Activation) {
+                bound.put(id, bound, value);
+            } else {
+                ScriptableObject.putProperty(bound, id, value);
+            }
             return value;
         } else {
             // See ES5 8.7.2
@@ -2235,8 +2231,8 @@ public class ScriptRuntime {
     public static Callable getNameFunctionAndThis(String name,
                                                   Context cx,
                                                   Scriptable scope,
-                                                  int activationDepth,
-                                                  int activationIndex)
+                                                  int optCallLevel,
+                                                  int optCallIndex)
     {
         Scriptable parent = scope.getParentScope();
         if (parent == null) {
@@ -2256,7 +2252,7 @@ public class ScriptRuntime {
 
         // name will call storeScriptable(cx, thisObj);
         return (Callable)nameOrFunction(cx, scope, parent, name,
-                activationDepth, activationIndex, true);
+                optCallLevel, optCallIndex, true);
     }
 
     /**
@@ -2408,7 +2404,7 @@ public class ScriptRuntime {
             if (thisObj instanceof NativeWith) {
                 // functions defined inside with should have with target
                 // as their thisObj
-            } else if (thisObj instanceof NativeCall) {
+            } else if (thisObj instanceof Activation) {
                 // nested functions should have top scope as their thisObj
                 thisObj = ScriptableObject.getTopLevelScope(thisObj);
             }
@@ -2651,15 +2647,15 @@ public class ScriptRuntime {
      * The typeof operator that correctly handles the undefined case
      */
     public static String typeofName(Scriptable scope, String id,
-                                    int activationDepth, int activationIndex)
+                                    int optCallLevel, int optCallIndex)
     {
         Context cx = Context.getContext();
-        Scriptable val = bind(cx, scope, id, activationDepth);
+        Scriptable val = bind(cx, scope, id, optCallLevel);
         if (val == null)
             return "undefined";
         Object value;
-        if (val instanceof OptCall && activationIndex > -1) {
-            value = ((OptCall)val).get(activationIndex);
+        if (val instanceof OptCall && optCallIndex > -1) {
+            value = ((OptCall)val).get(optCallIndex);
         } else {
             value = getObjectProp(val, id, cx);
         }
@@ -2733,7 +2729,7 @@ public class ScriptRuntime {
 
     public static Object nameIncrDecr(Scriptable scopeChain, String id,
                                       Context cx, int incrDecrMask,
-                                      int activationDepth, int activationIndex) {
+                                      int optCallLevel, int optCallIndex) {
         Scriptable target;
         Object value;
       search: {
@@ -2743,8 +2739,8 @@ public class ScriptRuntime {
                 }
                 target = scopeChain;
                 if (target instanceof OptCall) {
-                    if (activationDepth-- == 0) {
-                        value = ((OptCall) target).get(activationIndex);
+                    if (optCallLevel-- == 0) {
+                        value = ((OptCall) target).get(optCallIndex);
                         break search;
                     }
                 } else {
@@ -2765,7 +2761,7 @@ public class ScriptRuntime {
             throw notFoundError(scopeChain, id);
         }
         return doScriptableIncrDecr(target, id, scopeChain, value,
-                                    incrDecrMask, activationIndex);
+                                    incrDecrMask, optCallIndex);
     }
 
     public static Object propIncrDecr(Object obj, String id,
@@ -2798,7 +2794,7 @@ public class ScriptRuntime {
                                                Scriptable protoChainStart,
                                                Object value,
                                                int incrDecrMask,
-                                               int activationIndex)
+                                               int optCallIndex)
     {
         boolean post = ((incrDecrMask & Node.POST_FLAG) != 0);
         double number;
@@ -2817,8 +2813,8 @@ public class ScriptRuntime {
             --number;
         }
         Number result = wrapNumber(number);
-        if (target instanceof OptCall && activationIndex > -1) {
-            ((OptCall)target).set(activationIndex, result);
+        if (target instanceof OptCall && optCallIndex > -1) {
+            ((OptCall)target).set(optCallIndex, result);
         } else {
             target.put(id, protoChainStart, result);
         }

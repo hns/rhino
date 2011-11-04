@@ -90,10 +90,10 @@ public final class OptRuntime extends ScriptRuntime
     /**
      * Implement name(args) call shrinking optimizer code.
      */
-    public static Object callName(Object[] args, String name,  int activationDepth, int activationIndex,
-                                  Context cx, Scriptable scope)
+    public static Object callName(Object[] args, String name,  int optCallLevel,
+                                  int optCallIndex, Context cx, Scriptable scope)
     {
-        Callable f = getNameFunctionAndThis(name, cx, scope, activationDepth, activationIndex);
+        Callable f = getNameFunctionAndThis(name, cx, scope, optCallLevel, optCallIndex);
         Scriptable thisObj = lastStoredScriptable(cx);
         return f.call(cx, scope, thisObj, args);
     }
@@ -101,10 +101,10 @@ public final class OptRuntime extends ScriptRuntime
     /**
      * Implement name() call shrinking optimizer code.
      */
-    public static Object callName0(String name, int activationDepth, int activationIndex,
+    public static Object callName0(String name, int optCallLevel, int optCallIndex,
                                    Context cx, Scriptable scope)
     {
-        Callable f = getNameFunctionAndThis(name, cx, scope, activationDepth, activationIndex);
+        Callable f = getNameFunctionAndThis(name, cx, scope, optCallLevel, optCallIndex);
         Scriptable thisObj = lastStoredScriptable(cx);
         return f.call(cx, scope, thisObj, ScriptRuntime.emptyArgs);
     }
@@ -152,15 +152,15 @@ public final class OptRuntime extends ScriptRuntime
     }
 
     public static void initFunction(NativeFunction fn, int functionType,
-                                    int activationIndex, Scriptable scope,
+                                    int optCallIndex, Scriptable scope,
                                     Context cx)
     {
-        if (activationIndex != -1) {
+        if (optCallIndex != -1) {
             while (scope instanceof NativeWith) {
                 scope = scope.getParentScope();
             }
             if (scope instanceof OptCall) {
-                ((OptCall)scope).set(activationIndex, fn);
+                ((OptCall)scope).set(optCallIndex, fn);
                 return;
             }
         }
@@ -183,6 +183,30 @@ public final class OptRuntime extends ScriptRuntime
                                           Scriptable callerThis, int callType)
     {
         return ScriptRuntime.newSpecial(cx, fun, args, scope, callType);
+    }
+
+    public static Object setName(Scriptable bound, Object value,
+                                 Context cx, Scriptable scope, String id,
+                                 int optCallIndex, boolean strict)
+    {
+        if (bound instanceof OptCall) {
+            ((OptCall)bound).set(optCallIndex, value);
+            return value;
+        }
+        return strict
+                ? ScriptRuntime.strictSetName(bound, value, cx, scope, id)
+                : ScriptRuntime.setName(bound, value, cx, scope, id);
+    }
+
+
+    public static Object setConst(Scriptable bound, Object value, Context cx,
+                                  String id, int optCallIndex)
+    {
+        if (bound instanceof  OptCall) {
+            ((OptCall) bound).setConst(optCallIndex, value);
+            return value;
+        }
+        return ScriptRuntime.setConst(bound, value, cx, id);
     }
 
     public static Double wrapDouble(double num)
