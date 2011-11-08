@@ -46,7 +46,6 @@
 package org.mozilla.javascript.optimizer;
 
 import org.mozilla.javascript.*;
-import org.mozilla.javascript.ast.AstNode;
 import org.mozilla.javascript.ast.FunctionNode;
 import org.mozilla.javascript.ast.Jump;
 import org.mozilla.javascript.ast.Name;
@@ -1354,9 +1353,6 @@ public class Codegen implements Evaluator
     String mainClassName;
     String mainClassSignature;
 
-    Map<AstNode, Map<String, Integer>> bindings =
-            new HashMap<AstNode, Map<String, Integer>>();
-
     private double[] itsConstantList;
     private int itsConstantListSize;
 }
@@ -1394,16 +1390,12 @@ class BodyCodegen
 
         // generate name -> index bindings for OptCall activation
         if (fnCurrent != null) {
-            if (useOptCall) {
-                // create activation bindings
-                createBindings(scriptOrFn);
-            }
+            // create a list of bindings of current function and its ancestors
             bindings = new ArrayList<Map<String, Integer>>();
-            AstNode fn = scriptOrFn;
+            FunctionNode fn = fnCurrent.fnode;
             while (fn != null) {
-                Map<String, Integer> scope = codegen.bindings.get(fn);
-                if (scope != null) {
-                    bindings.add(scope);
+                if (fn.hasIndexedActivation()) {
+                    bindings.add(fn.getBindings());
                 }
                 fn = fn.getEnclosingFunction();
             }
@@ -1426,25 +1418,6 @@ class BodyCodegen
             // return a generator object
             generateGenerator();
         }
-    }
-
-    private void createBindings(ScriptNode scriptOrFn) {
-        Map<String, Integer> bindings = new HashMap<String, Integer>();
-        int paramCount = scriptOrFn.getParamCount();
-        String[] names = scriptOrFn.getParamAndVarNames();
-
-        for (int i = 0; i < paramCount; i++) {
-            bindings.put(names[i], Integer.valueOf(i));
-        }
-        // check if a parameter shadows the argument object
-        boolean shadowedArguments = bindings.containsKey("arguments");
-        for (int i = paramCount, l = names.length; i < l; i++) {
-            bindings.put(names[i], Integer.valueOf(i));
-        }
-        if (!shadowedArguments) {
-            bindings.put("arguments", Integer.valueOf(OptCall.ARGUMENTS_ID));
-        }
-        codegen.bindings.put(scriptOrFn, bindings);
     }
 
     // This creates a the user-facing function that returns a NativeGenerator
@@ -1476,17 +1449,7 @@ class BodyCodegen
         }
 
         // generators are forced to have an activation record
-        cfw.addALoad(funObjLocal);
-        cfw.addALoad(variableObjectLocal);
-        cfw.addALoad(argsLocal);
-        String methodName = useOptCall ?
-                "createOptFunctionActivation" : "createFunctionActivation";
-        addScriptRuntimeInvoke(methodName,
-                               "(Lorg/mozilla/javascript/NativeFunction;"
-                               +"Lorg/mozilla/javascript/Scriptable;"
-                               +"[Ljava/lang/Object;"
-                               +")Lorg/mozilla/javascript/Scriptable;");
-        cfw.addAStore(variableObjectLocal);
+        generateFunctionActivation();
 
         // create a function object
         cfw.add(ByteCode.NEW, codegen.mainClassName);
@@ -1557,7 +1520,6 @@ class BodyCodegen
             }
             inDirectCallFunction = fnCurrent.isTargetOfDirectCall();
             if (inDirectCallFunction && !hasVarsInRegs) Codegen.badTree();
-            useOptCall = !hasVarsInRegs && !fnCurrent.fnode.containsEval();
         } else {
             fnCurrent = null;
             hasVarsInRegs = false;
@@ -1775,17 +1737,7 @@ class BodyCodegen
         String debugVariableName;
         if (fnCurrent != null) {
             debugVariableName = "activation";
-            cfw.addALoad(funObjLocal);
-            cfw.addALoad(variableObjectLocal);
-            cfw.addALoad(argsLocal);
-            String methodName = useOptCall ?
-                    "createOptFunctionActivation" : "createFunctionActivation";
-            addScriptRuntimeInvoke(methodName,
-                                   "(Lorg/mozilla/javascript/NativeFunction;"
-                                   +"Lorg/mozilla/javascript/Scriptable;"
-                                   +"[Ljava/lang/Object;"
-                                   +")Lorg/mozilla/javascript/Scriptable;");
-            cfw.addAStore(variableObjectLocal);
+            generateFunctionActivation();
             cfw.addALoad(contextLocal);
             cfw.addALoad(variableObjectLocal);
             addScriptRuntimeInvoke("enterActivationFunction",
@@ -2359,7 +2311,7 @@ class BodyCodegen
                     cfw.addALoad(variableObjectLocal);
                     cfw.addPush(name);
                     pushOptActivation(name, true, true);
-                    addScriptRuntimeInvoke(
+                    addOptRuntimeInvoke(
                         "name",
                         "(Lorg/mozilla/javascript/Context;"
                         +"Lorg/mozilla/javascript/Scriptable;"
@@ -2831,7 +2783,7 @@ class BodyCodegen
                     cfw.addALoad(variableObjectLocal);
                     cfw.addPush(node.getString());
                     pushOptActivation(name, true, false);
-                    addScriptRuntimeInvoke(
+                    addOptRuntimeInvoke(
                         "bind",
                         "(Lorg/mozilla/javascript/Context;"
                         +"Lorg/mozilla/javascript/Scriptable;"
@@ -3171,12 +3123,13 @@ class BodyCodegen
             return;
         }
 
+        // Retrieve function's OptCall index
         int optCallIndex = -1;
-        if (fnCurrent != null) {
-            Map<String, Integer> binding = codegen.bindings.get(scriptOrFn);
+        if (fnCurrent != null && fnCurrent.fnode.hasIndexedActivation()) {
+            Map<String, Integer> bindings = fnCurrent.fnode.getBindings();
             String name = ofn.fnode.getName();
-            if (binding != null && binding.containsKey(name)) {
-                optCallIndex = binding.get(name).intValue();
+            if (bindings != null && name != null && bindings.containsKey(name)) {
+                optCallIndex = bindings.get(name).intValue();
             }
         }
         cfw.addPush(functionType);
@@ -3719,6 +3672,24 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
         }
     }
 
+    private void generateFunctionActivation()
+    {
+        // Generate a function activation scope
+        cfw.addALoad(funObjLocal);
+        cfw.addALoad(variableObjectLocal);
+        cfw.addALoad(argsLocal);
+        String signature = "(Lorg/mozilla/javascript/NativeFunction;"
+                               +"Lorg/mozilla/javascript/Scriptable;"
+                               +"[Ljava/lang/Object;"
+                               +")Lorg/mozilla/javascript/Scriptable;";
+        if (fnCurrent.fnode.hasIndexedActivation()) {
+            addOptRuntimeInvoke("createOptFuncActivation", signature);
+        } else {
+            addScriptRuntimeInvoke("createFunctionActivation", signature);
+        }
+        cfw.addAStore(variableObjectLocal);
+    }
+
     private void generateFunctionAndThisObj(Node node, Node parent)
     {
         // Place on stack (function object, function this) pair
@@ -3765,7 +3736,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             cfw.addPush(name);
             cfw.addALoad(contextLocal);
             cfw.addALoad(variableObjectLocal);
-            addScriptRuntimeInvoke(
+            addOptRuntimeInvoke(
                 "getNameFunctionAndThis",
                 "(Ljava/lang/String;"
                 +"Lorg/mozilla/javascript/Context;"
@@ -4418,13 +4389,15 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             }
         }
         String name = node.getString();
+        cfw.addALoad(contextLocal);
         cfw.addALoad(variableObjectLocal);
         cfw.addPush(name);
         pushOptActivation(name, true, true);
-        addScriptRuntimeInvoke("typeofName",
-                               "(Lorg/mozilla/javascript/Scriptable;"
-                               +"Ljava/lang/String;"
-                               +"II)Ljava/lang/String;");
+        addOptRuntimeInvoke("typeofName",
+                            "(Lorg/mozilla/javascript/Context;"
+                            +"Lorg/mozilla/javascript/Scriptable;"
+                            +"Ljava/lang/String;"
+                            +"II)Ljava/lang/String;");
     }
 
     /**
@@ -4522,7 +4495,7 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
             cfw.addALoad(contextLocal);
             cfw.addPush(incrDecrMask);
             pushOptActivation(name, true, true);
-            addScriptRuntimeInvoke("nameIncrDecr",
+            addOptRuntimeInvoke("nameIncrDecr",
                 "(Lorg/mozilla/javascript/Scriptable;"
                 +"Ljava/lang/String;"
                 +"Lorg/mozilla/javascript/Context;"
@@ -5512,7 +5485,6 @@ Else pass the JS object in the aReg and 0.0 in the dReg.
 
     private int itsLineNumber;
 
-    private boolean useOptCall;
     private boolean hasVarsInRegs;
     private short[] varRegisters;
     private boolean inDirectCallFunction;

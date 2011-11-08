@@ -22,8 +22,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Norris Boyd
- *   Igor Bukanov
+ *   Hannes Wallnoefer
  *
  * Alternatively, the contents of this file may be used under the terms of
  * the GNU General Public License Version 2 or later (the "GPL"), in which
@@ -41,12 +40,34 @@
 
 /**
  * An interface to be implemented by function activation scopes.
+ *
+ * @author Hannes Wallnoefer
  */
 public interface Activation extends Scriptable {
 
+    /**
+     * Set the parent activation object for later retrieval.
+     * @param parentActivation the parent activation object
+     */
     public void setParentActivation(Activation parentActivation);
+
+    /**
+     * Get the parent activation object previously set by
+     * {@link #setParentActivation(Activation)}
+     * @return the parent activation object
+     */
     public Activation getParentActivation();
+
+    /**
+     * Get the function associated with this activation object.
+     * @return the function object
+     */
     public Object getFunction();
+
+    /**
+     * Get the {@code arguments} object of this activation.
+     * @return the arguments object
+     */
     public Object getArguments();
 
 }
