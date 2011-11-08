@@ -282,6 +282,44 @@ public class OptCall extends ScriptableObject implements Activation {
         }
 
         @Override
+        public boolean has(String name, Scriptable start) {
+            if (super.has(name, start)) {
+                return true;
+            } else if ("length".equals(name)) {
+                return length != NOT_FOUND;
+            } else if ("constructor".equals(name)) {
+                return constructor != NOT_FOUND;
+            } else if ("callee".equals(name)) {
+                return callee != NOT_FOUND;
+            }
+            return false;
+        }
+
+        @Override
+        public void put(String name, Scriptable start, Object value) {
+            super.put(name, start, value);
+            if ("length".equals(name)) {
+                length = value;
+            } else if ("constructor".equals(name)) {
+                constructor = value;
+            } else if ("callee".equals(name)) {
+                callee = value;
+            }
+        }
+
+        @Override
+        public void delete(String name) {
+            super.delete(name);
+            if ("length".equals(name)) {
+                length = NOT_FOUND;
+            } else if ("constructor".equals(name)) {
+                constructor = NOT_FOUND;
+            } else if ("callee".equals(name)) {
+                callee = NOT_FOUND;
+            }
+        }
+
+        @Override
         public Object get(int index, Scriptable start) {
             if (hasArg(index)) {
                 return args[index];
@@ -320,25 +358,79 @@ public class OptCall extends ScriptableObject implements Activation {
         }
 
         @Override
+        public void defineOwnProperty(Context cx, Object id, ScriptableObject desc) {
+            super.defineOwnProperty(cx, id, desc);
+
+            double d = ScriptRuntime.toNumber(id);
+            int index = (int) d;
+            if (d != index) return;
+
+            if (!hasArg(index)) return;
+
+            if (isAccessorDescriptor(desc)) {
+              delete(index);
+              return;
+            }
+
+            Object newValue = getProperty(desc, "value");
+
+            if (newValue == NOT_FOUND) return;
+
+            put(index, this, newValue);
+            if (isFalse(getProperty(desc, "writable"))) {
+                delete(index);
+            }
+
+        }
+
+        @Override
         protected ScriptableObject getOwnPropertyDescriptor(Context cx, Object id) {
             double d = ScriptRuntime.toNumber(id);
             int index = (int) d;
             if (d != index || !hasArg(index) || super.has(index, this)) {
-                return super.getOwnPropertyDescriptor(cx, id);
+                ScriptableObject desc = super.getOwnPropertyDescriptor(cx, id);
+                if (desc == null) {
+                    if ("length".equals(id) && length != NOT_FOUND) {
+                        desc = buildDataDescriptor(this, length, DONTENUM);
+                    } else if ("constructor".equals(id) && constructor != NOT_FOUND) {
+                        desc = buildDataDescriptor(this, constructor, DONTENUM);
+                    } else if ("callee".equals(id) && callee != NOT_FOUND) {
+                        desc = buildDataDescriptor(this, callee, DONTENUM);
+                    }
+                }
+                return desc;
             }
-            Scriptable scope = getParentScope();
-            if (scope == null) scope = this;
-            return buildDataDescriptor(scope, args[index], EMPTY);
+            return buildDataDescriptor(this, args[index], EMPTY);
         }
 
         @Override
         public Object[] getIds() {
             int length = args.length;
-            Object[] ids = new Object[length];
-            for (int i = 0; i < length; i++) {
-                ids[i] = Integer.valueOf(i);
+            Object[] superIds = super.getIds();
+            if (length == 0) {
+                return superIds;
             }
-            return ids;
+            Object[] ownIds = new Object[length];
+            int count = 0;
+            for (int i = 0; i < length; i++) {
+                // avoid adding args which are already present in superIds
+                // (or would be if they were enumerable)
+                if (hasArg(i) && !super.has(i, this)) {
+                    ownIds[count++] = Integer.valueOf(i);
+                }
+            }
+            if (superIds.length == 0 && count == length) {
+                // common case
+                return ownIds;
+            }
+            if (count > 0) {
+                int mergedLength = superIds.length + count;
+                Object[] merged = new Object[mergedLength];
+                System.arraycopy(ownIds, 0, merged, 0, count);
+                System.arraycopy(superIds, 0, merged, count, superIds.length);
+                return merged;
+            }
+            return superIds;
         }
 
         private boolean hasArg(int index) {
