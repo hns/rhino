@@ -283,6 +283,15 @@ public class Context
      */
     public static final int FEATURE_ENHANCED_JAVA_ACCESS = 13;
 
+    /**
+     * Enables fallback to interpreter mode when compilation hits Java class
+     * file limits.
+     * <p>
+     * By default {@link #hasFeature(int)} returns true.
+     * @since 1.7 Release 5
+     */
+    public static final int FEATURE_FALLBACK_TO_INTERPRETER = 14;
+
     public static final String languageVersionProperty = "language version";
     public static final String errorReporterProperty   = "error reporter";
 
@@ -2374,9 +2383,33 @@ public class Context
             compiler = createCompiler();
         }
 
-        Object bytecode = compiler.compile(compilerEnv,
-                                           tree, tree.getEncodedSource(),
-                                           returnFunction);
+        Object bytecode;
+
+        try {
+            bytecode = compiler.compile(compilerEnv, tree,
+                                        tree.getEncodedSource(),
+                                        returnFunction);
+        } catch (ClassLimitException e) {
+            // We hit some class file limit, fall back to interpreter or report
+            // error depending on context feature.
+            if (hasFeature(FEATURE_FALLBACK_TO_INTERPRETER)) {
+                compiler = createInterpreter();
+                bytecode = compiler.compile(compilerEnv, tree,
+                                            tree.getEncodedSource(),
+                                            returnFunction);
+            } else {
+                String msg;
+                if (returnFunction) {
+                    msg = ScriptRuntime.getMessage2("msg.while.compiling.fn",
+                            tree.getFunctionNode(0).getFunctionName(),
+                            e.getMessage());
+                } else {
+                    msg = ScriptRuntime.getMessage1("msg.while.compiling.script",
+                            e.getMessage());
+                }
+                throw reportRuntimeError(msg, sourceName, lineno, null, 0);
+            }
+        }
         if (debugger != null) {
             if (sourceString == null) Kit.codeBug();
             if (bytecode instanceof DebuggableScript) {

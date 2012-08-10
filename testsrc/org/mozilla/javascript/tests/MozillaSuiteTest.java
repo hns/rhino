@@ -23,6 +23,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
+import org.mozilla.javascript.Context;
 import org.mozilla.javascript.drivers.ShellTest;
 import org.mozilla.javascript.drivers.StandardTests;
 import org.mozilla.javascript.drivers.TestUtils;
@@ -180,12 +181,19 @@ public class MozillaSuiteTest {
     @Test
     public void runMozillaTest() throws Exception {
         //System.out.println("Test \"" + jsFile + "\" running under optimization level " + optimizationLevel);
-        final ShellContextFactory shellContextFactory =
-            new ShellContextFactory();
-        shellContextFactory.setOptimizationLevel(optimizationLevel);
+        final ShellContextFactory contextFactory = new ShellContextFactory() {
+            @Override
+            protected boolean hasFeature(Context cx, int featureIndex) {
+                if (featureIndex == Context.FEATURE_FALLBACK_TO_INTERPRETER) {
+                    return false;
+                }
+                return super.hasFeature(cx, featureIndex);
+            }
+        };
+        contextFactory.setOptimizationLevel(optimizationLevel);
         ShellTestParameters params = new ShellTestParameters();
         JunitStatus status = new JunitStatus();
-        ShellTest.run(shellContextFactory, jsFile, params, status);
+        ShellTest.run(contextFactory, jsFile, params, status);
     }
 
 
